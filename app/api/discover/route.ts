@@ -170,7 +170,14 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    return NextResponse.json({ prospects })
+    return NextResponse.json({
+      prospects,
+      debug: {
+        placesFound: places.length,
+        withWebsite: candidates.length,
+        withEmail: prospects.length,
+      },
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })

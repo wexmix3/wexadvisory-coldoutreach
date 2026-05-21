@@ -29,6 +29,7 @@ export default function DiscoverPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
   const [savedCount, setSavedCount] = useState<number | null>(null)
+  const [debugStats, setDebugStats] = useState<{ placesFound: number; withWebsite: number; withEmail: number } | null>(null)
 
   async function discover() {
     if (!city.trim()) return
@@ -37,6 +38,7 @@ export default function DiscoverPage() {
     setProspects([])
     setSelected(new Set())
     setSavedCount(null)
+    setDebugStats(null)
 
     try {
       const res = await fetch('/api/discover', {
@@ -47,6 +49,7 @@ export default function DiscoverPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setProspects(data.prospects)
+      setDebugStats(data.debug ?? null)
       setSelected(new Set(data.prospects.map((p: DiscoveredProspect) => p.email)))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Discovery failed')
@@ -148,6 +151,16 @@ export default function DiscoverPage() {
         {savedCount !== null && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700">
             {savedCount} new prospect{savedCount !== 1 ? 's' : ''} added to your queue.
+          </div>
+        )}
+        {debugStats && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600">
+            Found <strong>{debugStats.placesFound}</strong> businesses on Google →{' '}
+            <strong>{debugStats.withWebsite}</strong> had websites →{' '}
+            <strong className={debugStats.withEmail === 0 ? 'text-red-600' : 'text-green-700'}>{debugStats.withEmail}</strong> had verified emails via Hunter
+            {debugStats.withEmail === 0 && debugStats.withWebsite > 0 && (
+              <span className="text-red-600"> — Hunter couldn&apos;t find emails for this category. Try a different industry or check your Hunter.io quota.</span>
+            )}
           </div>
         )}
       </div>
