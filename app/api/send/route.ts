@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabase'
 import { renderTemplate } from '@/lib/tokens'
 import { QueueItem } from '@/app/api/queue/route'
 
@@ -28,6 +28,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<str
 }
 
 export async function POST(req: NextRequest) {
+  const sb = getSupabaseAdmin()
   try {
     const { items }: { items: QueueItem[] } = await req.json()
     if (!items?.length) return NextResponse.json({ error: 'No items provided' }, { status: 400 })
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
     const appUrl = new URL(req.url).origin
 
     // Load templates
-    const { data: templates, error: tErr } = await supabaseAdmin
+    const { data: templates, error: tErr } = await sb
       .from('templates')
       .select('*')
     if (tErr) throw tErr
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
         const resendId = await sendEmail(prospect.email, subject, html)
 
         // Log the send
-        await supabaseAdmin.from('email_log').insert({
+        await sb.from('email_log').insert({
           prospect_id: prospect.id,
           template_type: send_type,
           subject,
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
           followup2: { status: 'followup2_sent', field: 'followup2_sent_at' },
         }
         const { status, field } = statusMap[send_type]
-        await supabaseAdmin
+        await sb
           .from('prospects')
           .update({ status, [field]: now })
           .eq('id', prospect.id)
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
         const msg = err instanceof Error ? err.message : 'Unknown'
         results.errors.push(`${prospect.email}: ${msg}`)
 
-        await supabaseAdmin.from('email_log').insert({
+        await sb.from('email_log').insert({
           prospect_id: prospect.id,
           template_type: send_type,
           subject: renderTemplate(template.subject, prospect, ''),

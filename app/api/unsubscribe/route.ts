@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  const sb = getSupabaseAdmin()
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
-  const { error } = await supabaseAdmin
+  const { error } = await sb
     .from('prospects')
     .update({ status: 'unsubscribed' })
     .eq('id', id)

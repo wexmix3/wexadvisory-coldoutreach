@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabase'
 import { Prospect } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -19,22 +19,23 @@ export interface QueueItem {
 }
 
 export async function GET() {
+  const sb = getSupabaseAdmin()
   const queue: QueueItem[] = []
 
   // Initial: status = queued
-  const { data: initial } = await supabaseAdmin
+  const { data: initial } = await sb
     .from('prospects')
     .select('*')
     .eq('status', 'queued')
     .order('created_at', { ascending: true })
-    .limit(50)
+    .limit(500)
 
   for (const p of initial ?? []) {
     queue.push({ prospect: p, send_type: 'initial' })
   }
 
   // Followup1: initial_sent >= 5 days ago, status = initial_sent
-  const { data: f1 } = await supabaseAdmin
+  const { data: f1 } = await sb
     .from('prospects')
     .select('*')
     .eq('status', 'initial_sent')
@@ -45,7 +46,7 @@ export async function GET() {
   }
 
   // Followup2: followup1_sent >= 7 days ago, status = followup1_sent
-  const { data: f2 } = await supabaseAdmin
+  const { data: f2 } = await sb
     .from('prospects')
     .select('*')
     .eq('status', 'followup1_sent')

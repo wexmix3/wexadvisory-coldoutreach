@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabase'
 import Anthropic from '@anthropic-ai/sdk'
 
 export const dynamic = 'force-dynamic'
@@ -10,9 +10,10 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const sb = getSupabaseAdmin()
   const { id } = params
 
-  const { data: prospect, error } = await supabaseAdmin
+  const { data: prospect, error } = await sb
     .from('prospects')
     .select('business_name, website, industry, city, state')
     .eq('id', id)
@@ -51,10 +52,7 @@ Reply with ONLY the opening sentence(s). No subject line, no greeting, no signat
 
     const intro = (message.content[0] as { type: string; text: string }).text.trim()
 
-    await supabaseAdmin
-      .from('prospects')
-      .update({ custom_intro: intro })
-      .eq('id', id)
+    await sb.from('prospects').update({ custom_intro: intro }).eq('id', id)
 
     return NextResponse.json({ intro })
   } catch (err) {

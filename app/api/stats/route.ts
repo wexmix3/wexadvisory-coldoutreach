@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabase'
+
+const sb = getSupabaseAdmin()
 
 export const dynamic = 'force-dynamic'
 
@@ -9,10 +11,10 @@ export async function GET() {
   const todayIso = today.toISOString()
 
   const [total, sentToday, followupsDue, replied] = await Promise.all([
-    supabaseAdmin.from('prospects').select('id', { count: 'exact', head: true }),
-    supabaseAdmin.from('email_log').select('id', { count: 'exact', head: true }).gte('sent_at', todayIso).eq('status', 'sent'),
-    supabaseAdmin.from('prospects').select('id', { count: 'exact', head: true }).in('status', ['initial_sent', 'followup1_sent']),
-    supabaseAdmin.from('prospects').select('id', { count: 'exact', head: true }).eq('status', 'replied'),
+    sb.from('prospects').select('id', { count: 'exact', head: true }),
+    sb.from('email_log').select('id', { count: 'exact', head: true }).gte('sent_at', todayIso).eq('status', 'sent'),
+    sb.from('prospects').select('id', { count: 'exact', head: true }).in('status', ['initial_sent', 'followup1_sent']),
+    sb.from('prospects').select('id', { count: 'exact', head: true }).eq('status', 'replied'),
   ])
 
   return NextResponse.json({
