@@ -48,7 +48,7 @@ export default function ProspectsPage() {
   async function load() {
     setLoading(true)
     const url = filter ? `/api/prospects?status=${filter}` : '/api/prospects'
-    const res = await fetch(url)
+    const res = await fetch(url, { cache: 'no-store' })
     const data = await res.json()
     setProspects(data.prospects ?? [])
     setLoading(false)

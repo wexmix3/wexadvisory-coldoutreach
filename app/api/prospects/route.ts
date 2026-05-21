@@ -18,5 +18,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ prospects: data })
+  return NextResponse.json({ prospects: data }, {
+    headers: { 'Cache-Control': 'no-store' },
+  })
 }
