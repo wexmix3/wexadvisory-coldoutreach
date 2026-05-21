@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getSupabaseAdmin } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  const sb = getSupabaseAdmin()
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
 
-  let query = supabaseAdmin
+  let query = sb
     .from('prospects')
     .select('*')
     .order('created_at', { ascending: false })
+    .limit(1000)
 
   if (status) {
     query = query.eq('status', status)
