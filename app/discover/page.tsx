@@ -71,6 +71,9 @@ export default function DiscoverPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setSavedCount(data.saved)
+      if (data.errors?.length) {
+        setError(`${data.saved} saved. Some failed: ${data.errors.slice(0, 3).join('; ')}`)
+      }
       setProspects([])
       setSelected(new Set())
     } catch (err) {
