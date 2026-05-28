@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { QueueItem } from '@/app/api/queue/route'
 import { Template } from '@/lib/types'
+import { getIndustryHook } from '@/lib/industry-hooks'
 
 const TYPE_LABEL: Record<string, string> = {
   initial: 'Initial',
@@ -15,6 +16,8 @@ const TYPE_COLOR: Record<string, string> = {
   followup2: 'bg-purple-100 text-purple-700',
 }
 
+const CALENDLY_URL = 'https://calendly.com/maxwexley-wexadvisory/free-strategy-call'
+
 function renderTokens(template: string, item: QueueItem, unsubUrl: string) {
   const p = item.prospect
   return template
@@ -22,6 +25,8 @@ function renderTokens(template: string, item: QueueItem, unsubUrl: string) {
     .replace(/\{\{contact_name\}\}/g, p.contact_name?.split(' ')[0] ?? 'there')
     .replace(/\{\{industry\}\}/g, p.industry ?? 'your industry')
     .replace(/\{\{city\}\}/g, p.city ?? 'your city')
+    .replace(/\{\{industry_hook\}\}/g, getIndustryHook(p.industry))
+    .replace(/\{\{calendly_url\}\}/g, CALENDLY_URL)
     .replace(/\{\{unsubscribe_url\}\}/g, unsubUrl)
 }
 
