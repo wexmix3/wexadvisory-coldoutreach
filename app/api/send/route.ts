@@ -5,7 +5,7 @@ import { QueueItem } from '@/app/api/queue/route'
 
 export const dynamic = 'force-dynamic'
 
-const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 50)
+const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 20)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 

@@ -56,6 +56,6 @@ export async function GET() {
     queue.push({ prospect: p, send_type: 'followup2' })
   }
 
-  // Cap total at 50 per day
-  return NextResponse.json({ queue: queue.slice(0, 50) })
+  // Cap total at 20 per day to protect sender reputation
+  return NextResponse.json({ queue: queue.slice(0, 20) })
 }

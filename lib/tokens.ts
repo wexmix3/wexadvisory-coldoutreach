@@ -1,4 +1,7 @@
 import { Prospect } from './types'
+import { getIndustryHook } from './industry-hooks'
+
+const CALENDLY_URL = process.env.CALENDLY_URL ?? 'https://calendly.com/maxwexley-wexadvisory/free-strategy-call'
 
 export function renderTemplate(
   template: string,
@@ -6,7 +9,6 @@ export function renderTemplate(
   unsubscribeUrl: string
 ): string {
   const contactName = prospect.contact_name?.split(' ')[0] || 'there'
-  // custom_intro may not exist on older DB rows — fall back to empty string
   const customIntro = (prospect as Prospect & { custom_intro?: string }).custom_intro ?? ''
   return template
     .replace(/\{\{business_name\}\}/g, prospect.business_name)
@@ -14,5 +16,7 @@ export function renderTemplate(
     .replace(/\{\{industry\}\}/g, prospect.industry ?? 'your industry')
     .replace(/\{\{city\}\}/g, prospect.city ?? 'your city')
     .replace(/\{\{custom_intro\}\}/g, customIntro)
+    .replace(/\{\{industry_hook\}\}/g, getIndustryHook(prospect.industry))
+    .replace(/\{\{calendly_url\}\}/g, CALENDLY_URL)
     .replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl)
 }

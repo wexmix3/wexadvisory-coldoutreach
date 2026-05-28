@@ -4,6 +4,7 @@ import { renderTemplate } from '@/lib/tokens'
 import { Prospect } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
@@ -11,7 +12,7 @@ function isAuthorized(req: NextRequest): boolean {
   return req.headers.get('authorization') === `Bearer ${secret}`
 }
 
-const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 50)
+const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 20)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 const FOLLOWUP1_DAYS = 5
