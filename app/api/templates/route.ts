@@ -7,7 +7,9 @@ export async function GET() {
   const sb = getSupabaseAdmin()
   const { data, error } = await sb.from('templates').select('*').order('type')
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ templates: data })
+  return NextResponse.json({ templates: data }, {
+    headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' }
+  })
 }
 
 export async function PUT(req: NextRequest) {
