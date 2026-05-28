@@ -8,7 +8,13 @@ export function getSupabaseAdmin(): SupabaseClient {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !url.startsWith('https://')) throw new Error('NEXT_PUBLIC_SUPABASE_URL not configured')
   if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY not configured')
-  _admin = createClient(url, key)
+  _admin = createClient(url, key, {
+    global: {
+      // Bypass Next.js 14 Data Cache — Supabase uses fetch() internally and
+      // Next.js caches those responses unless we explicitly opt out.
+      fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }),
+    },
+  })
   return _admin
 }
 
