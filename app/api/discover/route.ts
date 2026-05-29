@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getSupabaseAdmin } from '@/lib/supabase'
+import { fetchHtml } from '@/lib/scraper'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,20 +18,11 @@ function isRateLimited(ip: string): boolean {
   return false
 }
 
-// Places API (New) response shape
 interface NewPlace {
   id: string
   displayName?: { text: string }
   websiteUri?: string
   formattedAddress?: string
-}
-
-interface HunterEmail {
-  value: string
-  first_name?: string
-  last_name?: string
-  confidence: number
-  position?: string
 }
 
 export interface DiscoveredProspect {
@@ -42,59 +35,95 @@ export interface DiscoveredProspect {
   state: string
   google_place_id: string
   hunter_confidence: number
+  existing_status?: string
+}
+
+interface FoundEmail {
+  value: string
+  first_name?: string
+  last_name?: string
+  confidence: number
 }
 
 async function getPlaces(city: string, category: string): Promise<NewPlace[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
-  if (!apiKey || apiKey.startsWith('your_')) {
-    throw new Error('GOOGLE_PLACES_API_KEY not configured')
-  }
+  if (!apiKey || apiKey.startsWith('your_')) throw new Error('GOOGLE_PLACES_API_KEY not configured')
 
   const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      // Request only the fields we need — keeps the response lean
       'X-Goog-FieldMask': 'places.id,places.displayName,places.websiteUri,places.formattedAddress',
     },
-    body: JSON.stringify({
-      textQuery: `${category} in ${city}`,
-      pageSize: 20,
-    }),
+    body: JSON.stringify({ textQuery: `${category} in ${city}`, pageSize: 20 }),
   })
 
   const data = await res.json()
-
-  if (!res.ok) {
-    const msg = data.error?.message ?? data.error?.status ?? 'Unknown Google error'
-    throw new Error(`Google Places error: ${msg}`)
-  }
-
+  if (!res.ok) throw new Error(`Google Places error: ${data.error?.message ?? 'Unknown'}`)
   return data.places ?? []
 }
 
 function extractDomain(website: string): string | null {
-  try {
-    return new URL(website).hostname.replace(/^www\./, '')
-  } catch {
-    return null
-  }
+  try { return new URL(website).hostname.replace(/^www\./, '') } catch { return null }
 }
 
 function parseState(address: string): string {
-  // "123 Main St, Chicago, IL 60601, USA" → "IL"
-  const match = address.match(/,\s*([A-Z]{2})\s+\d{5}/)
-  return match?.[1] ?? ''
+  return address.match(/,\s*([A-Z]{2})\s+\d{5}/)?.[1] ?? ''
 }
 
 function parseCity(address: string): string {
-  // "123 Main St, Chicago, IL 60601, USA" → "Chicago"
   const parts = address.split(',')
   return parts.length >= 3 ? parts[parts.length - 3]?.trim() ?? '' : ''
 }
 
-async function findEmail(domain: string): Promise<HunterEmail | null> {
+const SKIP_PATTERNS = ['noreply', 'no-reply', 'donotreply', 'example.com', 'wordpress',
+  'sentry', 'wixpress', 'squarespace', 'godaddy', 'hosting', 'support@', 'hello@wix',
+  'privacy@', 'legal@', 'abuse@', 'postmaster@']
+
+function extractEmailsFromHtml(html: string): string[] {
+  const mailtoMatches = [...html.matchAll(/mailto:([^"'?\s>&#]+)/gi)].map(m =>
+    m[1].toLowerCase().replace(/(%40)/gi, '@').trim()
+  )
+  const regexMatches = [...html.matchAll(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)].map(m =>
+    m[0].toLowerCase()
+  )
+  return [...new Set([...mailtoMatches, ...regexMatches])]
+}
+
+function pickBestEmail(emails: string[], domain: string): string | null {
+  const valid = emails.filter(e =>
+    e.includes('@') &&
+    !SKIP_PATTERNS.some(p => e.includes(p)) &&
+    !e.endsWith('.png') && !e.endsWith('.jpg') && !e.endsWith('.svg')
+  )
+  const domainRoot = domain.split('.')[0]
+  return valid.find(e => e.split('@')[1]?.includes(domainRoot)) ?? valid[0] ?? null
+}
+
+async function scrapeEmail(website: string): Promise<FoundEmail | null> {
+  try {
+    const baseUrl = new URL(website).origin
+    const domain = new URL(website).hostname.replace(/^www\./, '')
+
+    // Try homepage and /contact in parallel
+    const [homeHtml, contactHtml] = await Promise.all([
+      fetchHtml(website),
+      fetchHtml(`${baseUrl}/contact`),
+    ])
+
+    const allEmails: string[] = []
+    if (homeHtml) allEmails.push(...extractEmailsFromHtml(homeHtml))
+    if (contactHtml) allEmails.push(...extractEmailsFromHtml(contactHtml))
+
+    const email = pickBestEmail(allEmails, domain)
+    if (!email) return null
+
+    return { value: email, confidence: 50 }
+  } catch { return null }
+}
+
+async function hunterEmail(domain: string): Promise<FoundEmail | null> {
   const apiKey = process.env.HUNTER_API_KEY
   if (!apiKey || apiKey.startsWith('your_')) return null
 
@@ -107,18 +136,25 @@ async function findEmail(domain: string): Promise<HunterEmail | null> {
     const res = await fetch(url.toString())
     const data = await res.json()
 
-    const emails: HunterEmail[] = data.data?.emails ?? []
+    // If Hunter returns quota error, bail silently
+    if (data.errors?.some((e: { code: number }) => e.code === 429)) return null
+
+    const emails: Array<{ value: string; first_name?: string; last_name?: string; confidence: number; position?: string }> = data.data?.emails ?? []
     if (emails.length === 0) return null
 
-    // Prefer decision-maker roles, then highest confidence
     const priority = ['ceo', 'founder', 'owner', 'president', 'director', 'manager']
-    const byRole = emails.find(e =>
-      priority.some(r => (e.position ?? '').toLowerCase().includes(r))
-    )
-    return byRole ?? emails.sort((a, b) => b.confidence - a.confidence)[0]
-  } catch {
-    return null
-  }
+    const byRole = emails.find(e => priority.some(r => (e.position ?? '').toLowerCase().includes(r)))
+    const best = byRole ?? emails.sort((a, b) => b.confidence - a.confidence)[0]
+
+    return { value: best.value, first_name: best.first_name, last_name: best.last_name, confidence: best.confidence }
+  } catch { return null }
+}
+
+async function findEmail(website: string, domain: string): Promise<FoundEmail | null> {
+  // Try scraping first (free), fall back to Hunter
+  const scraped = await scrapeEmail(website)
+  if (scraped) return scraped
+  return hunterEmail(domain)
 }
 
 export async function POST(req: NextRequest) {
@@ -129,37 +165,36 @@ export async function POST(req: NextRequest) {
 
   try {
     const { city, category } = await req.json()
-    if (!city || !category) {
-      return NextResponse.json({ error: 'city and category required' }, { status: 400 })
-    }
+    if (!city || !category) return NextResponse.json({ error: 'city and category required' }, { status: 400 })
 
     const places = await getPlaces(city, category)
 
-    // Resolve all Hunter lookups in parallel instead of serially
     const candidates = places
       .filter(p => p.websiteUri)
-      .map(place => {
-        const domain = extractDomain(place.websiteUri!)
-        return { place, domain }
-      })
+      .map(place => ({ place, domain: extractDomain(place.websiteUri!) }))
       .filter((c): c is { place: NewPlace; domain: string } => c.domain !== null)
 
     const emailResults = await Promise.allSettled(
-      candidates.map(({ domain }) => findEmail(domain))
+      candidates.map(({ place, domain }) => findEmail(place.websiteUri!, domain))
     )
 
     const prospects: DiscoveredProspect[] = []
+    let scrapedCount = 0
+    let hunterCount = 0
+
     for (let i = 0; i < candidates.length; i++) {
       const result = emailResults[i]
       if (result.status !== 'fulfilled' || !result.value) continue
       const email = result.value
       const { place } = candidates[i]
       const address = place.formattedAddress ?? ''
-      const contactName = [email.first_name, email.last_name].filter(Boolean).join(' ') || null
+
+      if (email.confidence === 50) scrapedCount++
+      else hunterCount++
 
       prospects.push({
         business_name: place.displayName?.text ?? 'Unknown',
-        contact_name: contactName,
+        contact_name: [email.first_name, email.last_name].filter(Boolean).join(' ') || null,
         email: email.value,
         website: place.websiteUri!,
         industry: category,
@@ -170,12 +205,32 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // Cross-reference against existing prospects by google_place_id
+    if (prospects.length > 0) {
+      const sb = getSupabaseAdmin()
+      const placeIds = prospects.map(p => p.google_place_id)
+      const { data: existing } = await sb
+        .from('prospects')
+        .select('google_place_id, status')
+        .in('google_place_id', placeIds)
+
+      if (existing && existing.length > 0) {
+        const existingMap = new Map(existing.map(r => [r.google_place_id, r.status]))
+        for (const p of prospects) {
+          const status = existingMap.get(p.google_place_id)
+          if (status) p.existing_status = status
+        }
+      }
+    }
+
     return NextResponse.json({
       prospects,
       debug: {
         placesFound: places.length,
         withWebsite: candidates.length,
         withEmail: prospects.length,
+        scrapedCount,
+        hunterCount,
       },
     })
   } catch (err) {
