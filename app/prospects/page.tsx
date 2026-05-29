@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react'
 import { Prospect, ProspectStatus } from '@/lib/types'
 
-type ProspectWithIntro = Prospect & { custom_intro?: string }
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All' },
@@ -34,13 +33,14 @@ function fmt(iso: string | null) {
 }
 
 export default function ProspectsPage() {
-  const [prospects, setProspects] = useState<ProspectWithIntro[]>([])
+  const [prospects, setProspects] = useState<Prospect[]>([])
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const [search, setSearch] = useState('')
-  const [generatingIntro, setGeneratingIntro] = useState<string | null>(null)
+  const [enriching, setEnriching] = useState(false)
+  const [enrichResult, setEnrichResult] = useState<{ enriched: number; failed: number } | null>(null)
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [filter])
@@ -73,16 +73,16 @@ export default function ProspectsPage() {
     setEditing(null)
   }
 
-  async function generateIntro(id: string) {
-    setGeneratingIntro(id)
+  async function enrichNow() {
+    setEnriching(true)
+    setEnrichResult(null)
     try {
-      const res = await fetch(`/api/prospects/${id}/personalize`, { method: 'POST' })
+      const res = await fetch('/api/enrich-prospects', { cache: 'no-store' })
       const data = await res.json()
-      if (data.intro) {
-        setProspects(prev => prev.map(p => p.id === id ? { ...p, custom_intro: data.intro } : p))
-      }
+      setEnrichResult({ enriched: data.enriched ?? 0, failed: data.failed ?? 0 })
+      await load()
     } finally {
-      setGeneratingIntro(null)
+      setEnriching(false)
     }
   }
 
@@ -94,15 +94,6 @@ export default function ProspectsPage() {
       )
     : prospects
 
-  const queuedCount = filtered.filter(p => p.status === 'queued' && !p.custom_intro).length
-
-  async function generateAllIntros() {
-    const targets = filtered.filter(p => p.status === 'queued' && !p.custom_intro)
-    for (const p of targets) {
-      await generateIntro(p.id)
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-4">
@@ -110,15 +101,20 @@ export default function ProspectsPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Prospects</h1>
           <p className="text-gray-500 text-sm mt-1">{prospects.length} total</p>
         </div>
-        {queuedCount > 0 && (
+        <div className="flex items-center gap-3">
           <button
-            onClick={generateAllIntros}
-            disabled={generatingIntro !== null}
+            onClick={enrichNow}
+            disabled={enriching}
             className="text-sm px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-colors font-medium"
           >
-            {generatingIntro ? 'Generating...' : `✦ Generate Intros for ${queuedCount} queued`}
+            {enriching ? 'Enriching...' : '✦ Enrich now'}
           </button>
-        )}
+          {enrichResult && (
+            <span className="text-sm text-gray-500">
+              {enrichResult.enriched} enriched{enrichResult.failed > 0 ? `, ${enrichResult.failed} failed` : ''}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -160,6 +156,7 @@ export default function ProspectsPage() {
                   <th className="px-4 py-3 font-medium text-gray-600">Email</th>
                   <th className="px-4 py-3 font-medium text-gray-600">Location</th>
                   <th className="px-4 py-3 font-medium text-gray-600">Status</th>
+                  <th className="px-4 py-3 font-medium text-gray-600">Fit</th>
                   <th className="px-4 py-3 font-medium text-gray-600">Sent</th>
                   <th className="px-4 py-3 font-medium text-gray-600">Intro Line</th>
                   <th className="px-4 py-3 font-medium text-gray-600">Notes</th>
@@ -180,6 +177,21 @@ export default function ProspectsPage() {
                         {p.status.replace(/_/g, ' ')}
                       </span>
                     </td>
+                    <td className="px-4 py-3">
+                      {p.fit_score != null ? (
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                          p.fit_score >= 70 ? 'bg-green-100 text-green-700' :
+                          p.fit_score >= 40 ? 'bg-amber-100 text-amber-700' :
+                          'bg-red-100 text-red-600'
+                        }`}>
+                          {p.fit_score}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">
+                          {p.enrichment_status === 'failed' ? 'failed' : '—'}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-400 text-xs">
                       {fmt(p.initial_sent_at)}
                     </td>
@@ -189,13 +201,9 @@ export default function ProspectsPage() {
                           {p.custom_intro.length > 80 ? p.custom_intro.slice(0, 80) + '…' : p.custom_intro}
                         </span>
                       ) : (
-                        <button
-                          onClick={() => generateIntro(p.id)}
-                          disabled={generatingIntro === p.id}
-                          className="text-xs text-violet-500 hover:text-violet-700 disabled:opacity-40 transition-colors"
-                        >
-                          {generatingIntro === p.id ? 'Writing...' : '✦ Generate'}
-                        </button>
+                        <span className="text-xs text-gray-300">
+                          {p.enrichment_status === 'failed' ? 'site unreachable' : 'pending'}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3 max-w-[160px]">
