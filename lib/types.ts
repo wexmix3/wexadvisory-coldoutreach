@@ -25,7 +25,14 @@ export interface Prospect {
   initial_sent_at: string | null
   followup1_sent_at: string | null
   followup2_sent_at: string | null
+  replied_at: string | null
   created_at: string
+  // Enrichment fields
+  custom_intro: string | null
+  fit_score: number | null
+  pain_signal: string | null
+  enrichment_status: string | null
+  enriched_at: string | null
 }
 
 export interface EmailLog {
