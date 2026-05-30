@@ -41,7 +41,7 @@ function sanitizeEmail(raw: string): string {
   return raw.replace(/[\\'"<>\s;,]+$/g, '').toLowerCase().trim()
 }
 
-function isValidEmail(email: string): boolean {
+export function isValidEmail(email: string): boolean {
   if (!VALID_EMAIL_RE.test(email)) return false
   const domain = email.split('@')[1] ?? ''
   if (IMAGE_EXTS.test(domain)) return false

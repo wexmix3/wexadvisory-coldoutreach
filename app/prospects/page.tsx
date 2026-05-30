@@ -43,6 +43,8 @@ export default function ProspectsPage() {
   const [search, setSearch] = useState('')
   const [enriching, setEnriching] = useState(false)
   const [enrichResult, setEnrichResult] = useState<{ enriched: number; failed: number } | null>(null)
+  const [cleaning, setCleaning] = useState(false)
+  const [cleanResult, setCleanResult] = useState<number | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [addForm, setAddForm] = useState(BLANK_FORM)
   const [addSaving, setAddSaving] = useState(false)
@@ -89,6 +91,19 @@ export default function ProspectsPage() {
       await load()
     } finally {
       setEnriching(false)
+    }
+  }
+
+  async function cleanupBadEmails() {
+    setCleaning(true)
+    setCleanResult(null)
+    try {
+      const res = await fetch('/api/prospects/cleanup', { method: 'POST' })
+      const data = await res.json()
+      setCleanResult(data.removed ?? 0)
+      if ((data.removed ?? 0) > 0) await load()
+    } finally {
+      setCleaning(false)
     }
   }
 
@@ -144,6 +159,18 @@ export default function ProspectsPage() {
           <p className="text-gray-500 text-sm mt-1">{prospects.length} total</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={cleanupBadEmails}
+            disabled={cleaning}
+            className="text-sm px-4 py-2 rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-50 transition-colors font-medium"
+          >
+            {cleaning ? 'Cleaning...' : '🗑 Clean bad emails'}
+          </button>
+          {cleanResult !== null && (
+            <span className="text-sm text-gray-500">
+              {cleanResult === 0 ? 'No bad emails found' : `${cleanResult} removed`}
+            </span>
+          )}
           <button
             onClick={() => { setShowAddModal(true); setAddError('') }}
             className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
