@@ -27,7 +27,7 @@ export async function GET() {
     .from('prospects')
     .select('*')
     .eq('status', 'queued')
-    .order('created_at', { ascending: true })
+    .order('fit_score', { ascending: false, nullsFirst: false })
     .limit(500)
 
   for (const p of initial ?? []) {

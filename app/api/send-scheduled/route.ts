@@ -30,7 +30,7 @@ async function buildQueue(): Promise<QueueItem[]> {
   const sb = getSupabaseAdmin()
   const queue: QueueItem[] = []
   const [{ data: initial }, { data: f1 }, { data: f2 }] = await Promise.all([
-    sb.from('prospects').select('*').eq('status', 'queued').order('created_at', { ascending: true }).limit(500),
+    sb.from('prospects').select('*').eq('status', 'queued').order('fit_score', { ascending: false, nullsFirst: false }).limit(500),
     sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)),
     sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)),
   ])
