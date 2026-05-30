@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react'
 import { Prospect, ProspectStatus } from '@/lib/types'
 
+const BLANK_FORM = { business_name: '', email: '', contact_name: '', website: '', industry: '', city: '', state: '' }
+
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All' },
@@ -41,6 +43,10 @@ export default function ProspectsPage() {
   const [search, setSearch] = useState('')
   const [enriching, setEnriching] = useState(false)
   const [enrichResult, setEnrichResult] = useState<{ enriched: number; failed: number } | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [addForm, setAddForm] = useState(BLANK_FORM)
+  const [addSaving, setAddSaving] = useState(false)
+  const [addError, setAddError] = useState('')
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [filter])
@@ -86,6 +92,42 @@ export default function ProspectsPage() {
     }
   }
 
+  async function addManually(e: React.FormEvent) {
+    e.preventDefault()
+    if (!addForm.business_name.trim() || !addForm.email.trim()) return
+    setAddSaving(true)
+    setAddError('')
+    try {
+      const res = await fetch('/api/prospects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prospects: [{
+            business_name: addForm.business_name.trim(),
+            email: addForm.email.trim(),
+            contact_name: addForm.contact_name.trim() || null,
+            website: addForm.website.trim() || null,
+            industry: addForm.industry.trim() || null,
+            city: addForm.city.trim() || null,
+            state: addForm.state.trim() || null,
+            google_place_id: null,
+            hunter_confidence: 100,
+          }],
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      if (data.saved === 0) throw new Error('Email already in system')
+      setShowAddModal(false)
+      setAddForm(BLANK_FORM)
+      await load()
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setAddSaving(false)
+    }
+  }
+
   const filtered = search
     ? prospects.filter(p =>
         p.business_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -102,6 +144,12 @@ export default function ProspectsPage() {
           <p className="text-gray-500 text-sm mt-1">{prospects.length} total</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => { setShowAddModal(true); setAddError('') }}
+            className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+          >
+            + Add prospect
+          </button>
           <button
             onClick={enrichNow}
             disabled={enriching}
@@ -247,6 +295,72 @@ export default function ProspectsPage() {
           </div>
         )}
       </div>
+
+      {/* Manual add modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowAddModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Add prospect manually</h2>
+              <p className="text-gray-500 text-sm mt-0.5">Added directly to your send queue.</p>
+            </div>
+            <form onSubmit={addManually} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Business name <span className="text-red-500">*</span></label>
+                  <input required value={addForm.business_name} onChange={e => setAddForm(f => ({ ...f, business_name: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Email <span className="text-red-500">*</span></label>
+                  <input required type="email" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Contact name</label>
+                  <input value={addForm.contact_name} onChange={e => setAddForm(f => ({ ...f, contact_name: e.target.value }))}
+                    placeholder="First Last"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Industry</label>
+                  <input value={addForm.industry} onChange={e => setAddForm(f => ({ ...f, industry: e.target.value }))}
+                    placeholder="e.g. Law firm"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Website</label>
+                  <input type="url" value={addForm.website} onChange={e => setAddForm(f => ({ ...f, website: e.target.value }))}
+                    placeholder="https://..."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">City</label>
+                  <input value={addForm.city} onChange={e => setAddForm(f => ({ ...f, city: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">State</label>
+                  <input value={addForm.state} onChange={e => setAddForm(f => ({ ...f, state: e.target.value }))}
+                    placeholder="e.g. NY"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+              {addError && <p className="text-sm text-red-600">{addError}</p>}
+              <div className="flex gap-3 justify-end pt-1">
+                <button type="button" onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:border-gray-300 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={addSaving}
+                  className="px-5 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">
+                  {addSaving ? 'Saving...' : 'Add to queue'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
