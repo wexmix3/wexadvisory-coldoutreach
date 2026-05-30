@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
   const { data: prospects, error } = await sb
     .from('prospects')
     .select('id, business_name, industry, city, state, website')
-    .eq('enrichment_status', 'pending')
+    .in('enrichment_status', ['pending', 'failed'])
     .not('website', 'is', null)
     .in('status', ['queued', 'new'])
     .order('created_at', { ascending: true })
