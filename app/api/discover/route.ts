@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { discoverProspects, extractDomain, DiscoveredProspect } from '@/lib/discovery'
+import { discoverProspects, DiscoveredProspect } from '@/lib/discovery'
 
 export type { DiscoveredProspect }
 export const dynamic = 'force-dynamic'
@@ -63,5 +63,3 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// keep extractDomain re-exported in case anything imports it from here
-export { extractDomain }
