@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/auto-discover",
+      "schedule": "0 9 * * 1-5"
+    },
+    {
       "path": "/api/enrich-prospects",
       "schedule": "0 11 * * 1-5"
     },
