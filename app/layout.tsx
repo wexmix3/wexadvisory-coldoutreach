@@ -19,10 +19,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body
         className={`${geistSans.variable} antialiased`}
-        style={{ display: 'flex', height: '100vh', overflow: 'hidden', margin: 0 }}
+        style={{ display: 'flex', height: '100vh', overflow: 'hidden', margin: 0, background: '#f8fafc' }}
       >
         <Sidebar />
-        <main style={{ flex: 1, overflowY: 'auto', background: '#f8fafc' }}>
+        <main style={{ flex: 1, overflowY: 'auto', padding: '32px 24px' }}>
           {children}
         </main>
       </body>

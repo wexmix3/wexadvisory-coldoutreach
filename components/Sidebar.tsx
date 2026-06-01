@@ -26,8 +26,6 @@ export default function Sidebar() {
         padding: '20px 12px',
         gap: '4px',
         height: '100vh',
-        position: 'sticky',
-        top: 0,
       }}
     >
       <div
