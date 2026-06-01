@@ -262,8 +262,9 @@ export default async function AnalyticsPage() {
     <div
       style={{
         background: '#0f172a',
-        minHeight: '100%',
-        padding: '28px 32px',
+        minHeight: '100vh',
+        margin: '-32px -24px',
+        padding: '32px',
         display: 'flex',
         flexDirection: 'column',
         gap: '24px',
