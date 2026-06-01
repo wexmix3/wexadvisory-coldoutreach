@@ -138,11 +138,14 @@ async function getAnalyticsData() {
     .slice(0, 5)
 
   // Recent activity — 8 most recent sends enriched with business name
-  const recentActivity: ActivityItem[] = logs.slice(0, 8).map((log) => ({
-    businessName: prospectMap.get(log.prospect_id)?.business_name ?? 'Unknown',
-    templateType: log.template_type,
-    sentAt: log.sent_at,
-  }))
+  const recentActivity: ActivityItem[] = logs
+    .filter((log) => log.status === 'sent')
+    .slice(0, 8)
+    .map((log) => ({
+      businessName: prospectMap.get(log.prospect_id)?.business_name ?? 'Unknown',
+      templateType: log.template_type,
+      sentAt: log.sent_at,
+    }))
 
   return {
     totalSent,
