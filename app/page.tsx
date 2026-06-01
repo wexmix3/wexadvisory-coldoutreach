@@ -1,149 +1,604 @@
-import Link from 'next/link'
-import { supabaseAdmin } from '@/lib/supabase'
+// app/page.tsx
+import { getSupabaseAdmin } from '@/lib/supabase'
+import React from 'react'
 
 export const dynamic = 'force-dynamic'
 
-async function getStats() {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const todayIso = today.toISOString()
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-  const [total, sentToday, queued, replied, recentLogs] = await Promise.all([
-    supabaseAdmin.from('prospects').select('id', { count: 'exact', head: true }),
-    supabaseAdmin.from('email_log').select('id', { count: 'exact', head: true }).gte('sent_at', todayIso).eq('status', 'sent'),
-    supabaseAdmin.from('prospects').select('id', { count: 'exact', head: true }).eq('status', 'queued'),
-    supabaseAdmin.from('prospects').select('id', { count: 'exact', head: true }).eq('status', 'replied'),
-    supabaseAdmin
+function pct(num: number, denom: number): string {
+  if (!denom) return '—'
+  return `${Math.round((num / denom) * 100)}%`
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffH = Math.floor(diffMs / (1000 * 60 * 60))
+  if (diffH < 1) return 'Just now'
+  if (diffH < 24) return `${diffH}h ago`
+  const diffD = Math.floor(diffH / 24)
+  if (diffD === 1) return 'Yesterday'
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type LogRow = {
+  template_type: string
+  status: string
+  opened_at: string | null
+  clicked_at: string | null
+  prospect_id: string
+  sent_at: string
+}
+
+type ProspectRow = {
+  id: string
+  industry: string | null
+  status: string
+  initial_sent_at: string | null
+  replied_at: string | null
+  business_name: string
+}
+
+type TemplateStats = { sent: number; opens: number; clicks: number; bounced: number }
+type IndustryStats = { industry: string; sent: number; replied: number; replyRate: number }
+type ActivityItem = { businessName: string; templateType: string; sentAt: string }
+
+// ── Data fetching ─────────────────────────────────────────────────────────────
+
+async function getAnalyticsData() {
+  const sb = getSupabaseAdmin()
+
+  const [logsRes, prospectsRes] = await Promise.all([
+    sb
       .from('email_log')
-      .select('*, prospects(business_name, email, city, state)')
+      .select('template_type, status, opened_at, clicked_at, prospect_id, sent_at')
       .order('sent_at', { ascending: false })
-      .limit(10),
+      .limit(5000),
+    sb
+      .from('prospects')
+      .select('id, industry, status, initial_sent_at, replied_at, business_name')
+      .limit(5000),
   ])
 
+  const logs = (logsRes.data ?? []) as LogRow[]
+  const prospects = (prospectsRes.data ?? []) as ProspectRow[]
+
+  // Prospect lookup map (id → prospect)
+  const prospectMap = new Map(prospects.map((p) => [p.id, p]))
+
+  // Funnel totals
+  const totalSent = logs.filter((l) => l.status === 'sent').length
+  const totalOpened = logs.filter((l) => l.opened_at).length
+  const totalClicked = logs.filter((l) => l.clicked_at).length
+  const totalBounced = logs.filter((l) => l.status === 'bounced').length
+  const totalReplied = prospects.filter((p) => p.status === 'replied').length
+  const totalUnsubscribed = prospects.filter((p) => p.status === 'unsubscribed').length
+  const queued = prospects.filter((p) => p.status === 'queued').length
+
+  // By template
+  const byTemplate: Record<string, TemplateStats> = {
+    initial: { sent: 0, opens: 0, clicks: 0, bounced: 0 },
+    followup1: { sent: 0, opens: 0, clicks: 0, bounced: 0 },
+    followup2: { sent: 0, opens: 0, clicks: 0, bounced: 0 },
+  }
+  for (const log of logs) {
+    const t = byTemplate[log.template_type]
+    if (!t) continue
+    if (log.status === 'sent') t.sent++
+    if (log.status === 'bounced') t.bounced++
+    if (log.opened_at) t.opens++
+    if (log.clicked_at) t.clicks++
+  }
+
+  // By industry (sorted by reply rate DESC)
+  const industryMap: Record<string, { sent: number; replied: number }> = {}
+  for (const log of logs) {
+    if (log.status !== 'sent') continue
+    const industry = prospectMap.get(log.prospect_id)?.industry ?? 'Unknown'
+    if (!industryMap[industry]) industryMap[industry] = { sent: 0, replied: 0 }
+    industryMap[industry].sent++
+  }
+  for (const p of prospects) {
+    if (p.status !== 'replied') continue
+    const industry = p.industry ?? 'Unknown'
+    if (!industryMap[industry]) industryMap[industry] = { sent: 0, replied: 0 }
+    industryMap[industry].replied++
+  }
+  const byIndustry: IndustryStats[] = Object.entries(industryMap)
+    .map(([industry, data]) => ({
+      industry,
+      sent: data.sent,
+      replied: data.replied,
+      replyRate: data.sent ? data.replied / data.sent : 0,
+    }))
+    .sort((a, b) => b.replyRate - a.replyRate)
+
+  // Avg days to reply
+  const responseTimes = prospects
+    .filter((p) => p.status === 'replied' && p.initial_sent_at && p.replied_at)
+    .map((p) => {
+      const sent = new Date(p.initial_sent_at!).getTime()
+      const replied = new Date(p.replied_at!).getTime()
+      return Math.round((replied - sent) / (1000 * 60 * 60 * 24))
+    })
+  const avgDaysToReply =
+    responseTimes.length
+      ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+      : null
+
+  // Recent replies (5 most recent)
+  const recentReplies = prospects
+    .filter((p) => p.status === 'replied')
+    .sort((a, b) => (b.replied_at ?? '').localeCompare(a.replied_at ?? ''))
+    .slice(0, 5)
+
+  // Recent activity — 8 most recent sends enriched with business name
+  const recentActivity: ActivityItem[] = logs.slice(0, 8).map((log) => ({
+    businessName: prospectMap.get(log.prospect_id)?.business_name ?? 'Unknown',
+    templateType: log.template_type,
+    sentAt: log.sent_at,
+  }))
+
   return {
-    total: total.count ?? 0,
-    sentToday: sentToday.count ?? 0,
-    queued: queued.count ?? 0,
-    replied: replied.count ?? 0,
-    recentLogs: recentLogs.data ?? [],
+    totalSent,
+    totalOpened,
+    totalClicked,
+    totalBounced,
+    totalReplied,
+    totalUnsubscribed,
+    queued,
+    openRate: pct(totalOpened, totalSent),
+    replyRate: pct(totalReplied, totalSent),
+    byTemplate,
+    byIndustry,
+    avgDaysToReply,
+    recentReplies,
+    recentActivity,
   }
 }
 
-function fmt(iso: string) {
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-  })
+// ── Sub-components (server, no 'use client' needed) ───────────────────────────
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        background: '#1e293b',
+        borderRadius: '10px',
+        border: '1px solid #334155',
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid #334155' }}>
+        <div
+          style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            letterSpacing: '0.8px',
+            textTransform: 'uppercase',
+            color: '#94a3b8',
+          }}
+        >
+          {title}
+        </div>
+      </div>
+      <div style={{ padding: '20px' }}>{children}</div>
+    </div>
+  )
 }
 
-type RecentLog = {
-  id: string
-  template_type: string
-  sent_at: string
-  status: string
-  prospects: { business_name: string; email: string; city: string | null; state: string | null } | null
+function ReplyPill({ value, rate }: { value: string; rate: number }) {
+  const color = rate >= 0.07 ? '#22c55e' : rate >= 0.04 ? '#60a5fa' : '#f59e0b'
+  const bg = rate >= 0.07 ? '#14532d44' : rate >= 0.04 ? '#1e3a5f44' : '#92400e44'
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        padding: '2px 8px',
+        borderRadius: '12px',
+        fontSize: '11px',
+        fontWeight: 600,
+        background: bg,
+        color,
+      }}
+    >
+      {value}
+    </span>
+  )
 }
 
-export default async function DashboardPage() {
-  const stats = await getStats()
+// ── Page ─────────────────────────────────────────────────────────────────────
 
-  const statCards = [
-    { label: 'Total Prospects', value: stats.total, href: '/prospects', color: 'text-gray-900' },
-    { label: 'Sent Today', value: stats.sentToday, href: '/prospects', color: 'text-blue-700' },
-    { label: 'In Queue', value: stats.queued, href: '/send', color: 'text-amber-700' },
-    { label: 'Replied', value: stats.replied, href: '/prospects', color: 'text-green-700' },
+const TEMPLATE_LABELS: Record<string, string> = {
+  initial: 'Initial',
+  followup1: 'Follow-up 1',
+  followup2: 'Follow-up 2',
+}
+
+const TH_STYLE: React.CSSProperties = {
+  fontSize: '10px',
+  fontWeight: 600,
+  letterSpacing: '0.7px',
+  textTransform: 'uppercase',
+  color: '#64748b',
+  paddingBottom: '10px',
+}
+
+export default async function AnalyticsPage() {
+  const {
+    totalSent,
+    totalOpened,
+    totalClicked,
+    totalBounced,
+    totalReplied,
+    totalUnsubscribed,
+    queued,
+    openRate,
+    replyRate,
+    byTemplate,
+    byIndustry,
+    avgDaysToReply,
+    recentReplies,
+    recentActivity,
+  } = await getAnalyticsData()
+
+  const funnelRows = [
+    { label: 'Sent', count: totalSent, color: '#3b82f6' },
+    { label: 'Opened', count: totalOpened, color: '#8b5cf6' },
+    { label: 'Clicked', count: totalClicked, color: '#f59e0b' },
+    { label: 'Replied', count: totalReplied, color: '#22c55e' },
+    { label: 'Bounced', count: totalBounced, color: '#ef4444' },
   ]
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <Link
-            href="/discover"
-            className="text-sm px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:border-gray-300 transition-colors"
-          >
-            Find Prospects
-          </Link>
-          <Link
-            href="/send"
-            className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
-          >
-            Send Today&apos;s Batch →
-          </Link>
-        </div>
+    <div
+      style={{
+        background: '#0f172a',
+        minHeight: '100%',
+        padding: '28px 32px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '24px',
+      }}
+    >
+      {/* Header */}
+      <div>
+        <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#f1f5f9', letterSpacing: '-0.3px', margin: 0 }}>
+          Analytics
+        </h1>
+        <p style={{ fontSize: '13px', color: '#64748b', marginTop: '2px', marginBottom: 0 }}>
+          All-time campaign performance
+        </p>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {statCards.map(s => (
-          <Link
-            key={s.label}
-            href={s.href}
-            className="bg-white rounded-xl border border-gray-200 p-5 hover:border-gray-300 transition-colors"
+      {/* KPI row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
+        {[
+          { label: 'Total Sent', value: totalSent, sub: 'across 3 templates', color: '#3b82f6' },
+          { label: 'Open Rate', value: openRate, sub: `${totalOpened} of ${totalSent} opened`, color: '#8b5cf6' },
+          { label: 'Reply Rate', value: replyRate, sub: `${totalReplied} replies total`, color: '#22c55e' },
+          { label: 'Queued', value: queued, sub: 'ready to send', color: '#f59e0b' },
+        ].map((card) => (
+          <div
+            key={card.label}
+            style={{
+              background: '#1e293b',
+              borderRadius: '10px',
+              padding: '18px 20px',
+              border: '1px solid #334155',
+              borderLeft: `4px solid ${card.color}`,
+            }}
           >
-            <div className={`text-3xl font-bold ${s.color}`}>{s.value}</div>
-            <div className="text-sm text-gray-500 mt-1">{s.label}</div>
-          </Link>
+            <div
+              style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                letterSpacing: '0.8px',
+                textTransform: 'uppercase',
+                color: '#64748b',
+              }}
+            >
+              {card.label}
+            </div>
+            <div
+              style={{
+                fontSize: '28px',
+                fontWeight: 700,
+                lineHeight: 1,
+                color: card.color,
+                margin: '6px 0',
+              }}
+            >
+              {card.value}
+            </div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>{card.sub}</div>
+          </div>
         ))}
       </div>
 
-      {/* Call to action when queue is ready */}
-      {stats.queued > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 flex items-center justify-between">
-          <div>
-            <p className="font-medium text-blue-900">
-              {stats.queued} email{stats.queued !== 1 ? 's' : ''} ready to send today
-            </p>
-            <p className="text-sm text-blue-700 mt-0.5">
-              Review and fire them off in one click.
-            </p>
-          </div>
-          <Link
-            href="/send"
-            className="bg-blue-600 text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-blue-700 transition-colors shrink-0"
-          >
-            Send Now →
-          </Link>
-        </div>
-      )}
+      {/* Row 2: Funnel + By Template */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
 
-      {/* Recent activity */}
-      <div>
-        <h2 className="text-base font-semibold text-gray-900 mb-3">Recent Activity</h2>
-        {stats.recentLogs.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-gray-400 text-sm">
-            No emails sent yet.{' '}
-            <Link href="/discover" className="text-blue-600 hover:underline">
-              Find your first prospects →
-            </Link>
+        {/* Funnel */}
+        <Panel title="Conversion Funnel">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {funnelRows.map((row) => (
+              <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '52px',
+                    fontSize: '12px',
+                    color: '#64748b',
+                    textAlign: 'right',
+                    flexShrink: 0,
+                  }}
+                >
+                  {row.label}
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    height: '16px',
+                    background: '#0f172a',
+                    borderRadius: '4px',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: totalSent ? `${Math.round((row.count / totalSent) * 100)}%` : '0%',
+                      height: '100%',
+                      background: row.color,
+                      borderRadius: '4px',
+                    }}
+                  />
+                </div>
+                <div
+                  style={{ width: '36px', fontSize: '12px', color: '#94a3b8', textAlign: 'right', flexShrink: 0 }}
+                >
+                  {row.count}
+                </div>
+                <div style={{ width: '40px', fontSize: '11px', color: '#64748b', flexShrink: 0 }}>
+                  {pct(row.count, totalSent)}
+                </div>
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="divide-y divide-gray-50">
-              {(stats.recentLogs as RecentLog[]).map(log => (
-                <div key={log.id} className="flex items-center gap-4 px-5 py-3">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${log.status === 'sent' ? 'bg-green-400' : 'bg-red-400'}`} />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-medium text-sm text-gray-900">
-                      {log.prospects?.business_name ?? 'Unknown'}
-                    </span>
-                    <span className="text-gray-400 text-sm"> · {log.prospects?.email}</span>
+        </Panel>
+
+        {/* By Template */}
+        <Panel title="By Template">
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...TH_STYLE, textAlign: 'left' }}>Template</th>
+                <th style={{ ...TH_STYLE, textAlign: 'right' }}>Sent</th>
+                <th style={{ ...TH_STYLE, textAlign: 'right' }}>Opens%</th>
+                <th style={{ ...TH_STYLE, textAlign: 'right' }}>Clicks%</th>
+                <th style={{ ...TH_STYLE, textAlign: 'right' }}>Bounced</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(byTemplate).map(([type, data]) => (
+                <tr key={type} style={{ borderTop: '1px solid #334155' }}>
+                  <td style={{ fontSize: '13px', color: '#e2e8f0', padding: '8px 0' }}>
+                    {TEMPLATE_LABELS[type] ?? type}
+                  </td>
+                  <td style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'right', padding: '8px 0' }}>
+                    {data.sent}
+                  </td>
+                  <td style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'right', padding: '8px 0' }}>
+                    {pct(data.opens, data.sent)}
+                  </td>
+                  <td style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'right', padding: '8px 0' }}>
+                    {pct(data.clicks, data.sent)}
+                  </td>
+                  <td style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'right', padding: '8px 0' }}>
+                    {data.bounced}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div
+            style={{
+              marginTop: '20px',
+              paddingTop: '16px',
+              borderTop: '1px solid #334155',
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: '#64748b',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.7px',
+                }}
+              >
+                Avg Response Time
+              </div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#94a3b8', marginTop: '4px' }}>
+                {avgDaysToReply !== null ? (
+                  <>
+                    {avgDaysToReply}{' '}
+                    <span style={{ fontSize: '13px', fontWeight: 400 }}>days</span>
+                  </>
+                ) : (
+                  '—'
+                )}
+              </div>
+            </div>
+            <div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: '#64748b',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.7px',
+                }}
+              >
+                Unsubscribed
+              </div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#ef444488', marginTop: '4px' }}>
+                {totalUnsubscribed}
+              </div>
+            </div>
+          </div>
+        </Panel>
+      </div>
+
+      {/* Row 3: By Industry + Recent Replies + Recent Activity */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px' }}>
+
+        {/* By Industry */}
+        <Panel title="By Industry">
+          {byIndustry.length === 0 ? (
+            <p style={{ fontSize: '13px', color: '#475569', margin: 0 }}>No data yet.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ ...TH_STYLE, textAlign: 'left' }}>Industry</th>
+                  <th style={{ ...TH_STYLE, textAlign: 'right' }}>Sent</th>
+                  <th style={{ ...TH_STYLE, textAlign: 'right' }}>Reply%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byIndustry.slice(0, 8).map((row) => (
+                  <tr key={row.industry} style={{ borderTop: '1px solid #334155' }}>
+                    <td style={{ fontSize: '13px', color: '#e2e8f0', padding: '8px 0' }}>
+                      {row.industry}
+                    </td>
+                    <td style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'right', padding: '8px 0' }}>
+                      {row.sent}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '8px 0' }}>
+                      <ReplyPill value={pct(row.replied, row.sent)} rate={row.replyRate} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Panel>
+
+        {/* Recent Replies */}
+        <Panel title="Recent Replies">
+          {recentReplies.length === 0 ? (
+            <p style={{ fontSize: '13px', color: '#475569', margin: 0 }}>No replies yet.</p>
+          ) : (
+            <div>
+              {recentReplies.map((p, i) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 0',
+                    borderTop: i === 0 ? 'none' : '1px solid #334155',
+                    gap: '12px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '7px',
+                        height: '7px',
+                        borderRadius: '50%',
+                        background: '#22c55e',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontSize: '13px',
+                        color: '#e2e8f0',
+                        fontWeight: 500,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {p.business_name}
+                    </div>
                   </div>
-                  <span className="text-xs text-gray-400 shrink-0 capitalize">
-                    {log.template_type.replace('followup', 'Follow-up ')}
-                  </span>
-                  <span className="text-xs text-gray-400 shrink-0">{fmt(log.sent_at)}</span>
+                  <div style={{ fontSize: '11px', color: '#475569', flexShrink: 0 }}>
+                    {relativeTime(p.replied_at)}
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </Panel>
+
+        {/* Recent Activity */}
+        <Panel title="Recent Activity">
+          {recentActivity.length === 0 ? (
+            <p style={{ fontSize: '13px', color: '#475569', margin: 0 }}>No emails sent yet.</p>
+          ) : (
+            <div>
+              {recentActivity.map((item, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '10px',
+                    padding: '8px 0',
+                    borderTop: i === 0 ? 'none' : '1px solid #334155',
+                    fontSize: '12px',
+                  }}
+                >
+                  <span style={{ fontSize: '13px', marginTop: '1px', flexShrink: 0 }}>📤</span>
+                  <div style={{ color: '#94a3b8', lineHeight: '1.4', flex: 1 }}>
+                    <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{item.businessName}</span>
+                    {' · '}
+                    {TEMPLATE_LABELS[item.templateType] ?? item.templateType}
+                  </div>
+                  <div style={{ color: '#475569', fontSize: '11px', flexShrink: 0 }}>
+                    {relativeTime(item.sentAt)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
       </div>
+
+      {/* Empty state */}
+      {totalSent === 0 && (
+        <div
+          style={{
+            background: '#1e293b',
+            borderRadius: '10px',
+            border: '1px solid #334155',
+            textAlign: 'center',
+            padding: '80px 32px',
+            color: '#475569',
+            fontSize: '14px',
+          }}
+        >
+          No data yet — send your first batch to start seeing analytics.
+        </div>
+      )}
     </div>
   )
 }
