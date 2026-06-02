@@ -12,7 +12,7 @@ function isAuthorized(req: NextRequest): boolean {
   return req.headers.get('authorization') === `Bearer ${secret}`
 }
 
-const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 20)
+const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 10)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 const FOLLOWUP1_DAYS = 5
@@ -46,16 +46,22 @@ async function sendEmail(to: string, subject: string, html: string): Promise<str
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM, to, reply_to: REPLY_TO, subject, html, track_opens: true, track_clicks: true }),
+    body: JSON.stringify({ from: FROM, to, reply_to: REPLY_TO, subject, html }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.message ?? 'Resend error')
   return data.id ?? null
 }
 
+const RESUME_DATE = new Date('2026-06-06T00:00:00Z')
+
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  if (new Date() < RESUME_DATE) {
+    return NextResponse.json({ sent: 0, skipped: true, message: 'Paused until 2026-06-06 for domain reputation recovery' })
   }
 
   const sb = getSupabaseAdmin()
