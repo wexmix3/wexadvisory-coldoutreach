@@ -101,6 +101,9 @@ async function scrapeEmail(website: string): Promise<FoundEmail | null> {
   } catch { return null }
 }
 
+// Decision-maker titles to prioritize — these are the people who buy AI consulting
+const DECISION_MAKER_TITLES = ['ceo', 'founder', 'owner', 'president', 'partner', 'managing director', 'chief operating', 'vp of operations', 'director of operations', 'head of operations', 'general manager', 'principal', 'director']
+
 async function hunterEmail(domain: string): Promise<FoundEmail | null> {
   const apiKey = process.env.HUNTER_API_KEY
   if (!apiKey || apiKey.startsWith('your_')) return null
@@ -109,7 +112,7 @@ async function hunterEmail(domain: string): Promise<FoundEmail | null> {
     const url = new URL('https://api.hunter.io/v2/domain-search')
     url.searchParams.set('domain', domain)
     url.searchParams.set('api_key', apiKey)
-    url.searchParams.set('limit', '5')
+    url.searchParams.set('limit', '10')
 
     const res = await fetch(url.toString())
     const data = await res.json()
@@ -119,17 +122,23 @@ async function hunterEmail(domain: string): Promise<FoundEmail | null> {
     const emails: Array<{ value: string; first_name?: string; last_name?: string; confidence: number; position?: string }> = data.data?.emails ?? []
     if (emails.length === 0) return null
 
-    const priority = ['ceo', 'founder', 'owner', 'president', 'director', 'manager']
-    const byRole = emails.find(e => priority.some(r => (e.position ?? '').toLowerCase().includes(r)))
-    const best = byRole ?? emails.sort((a, b) => b.confidence - a.confidence)[0]
+    // Require a named contact — skip if no first name (generic contact@/info@ type)
+    const namedEmails = emails.filter(e => e.first_name && e.first_name.length > 0)
+    if (namedEmails.length === 0) return null
+
+    // Prefer decision-maker titles first, then highest confidence among named contacts
+    const byRole = namedEmails.find(e => DECISION_MAKER_TITLES.some(r => (e.position ?? '').toLowerCase().includes(r)))
+    const best = byRole ?? namedEmails.sort((a, b) => b.confidence - a.confidence)[0]
+
+    // Require minimum confidence threshold
+    if (best.confidence < 50) return null
 
     return { value: best.value, first_name: best.first_name, last_name: best.last_name, confidence: best.confidence }
   } catch { return null }
 }
 
-async function findEmail(website: string, domain: string): Promise<FoundEmail | null> {
-  const scraped = await scrapeEmail(website)
-  if (scraped) return scraped
+// Only use Hunter.io — scraped generic emails (contact@, info@) land in spam
+async function findEmail(_website: string, domain: string): Promise<FoundEmail | null> {
   return hunterEmail(domain)
 }
 
