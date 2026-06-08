@@ -80,6 +80,7 @@ function pickBestEmail(emails: string[], domain: string): string | null {
   return valid.find(e => e.split('@')[1]?.includes(domainRoot)) ?? valid[0] ?? null
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function scrapeEmail(website: string): Promise<FoundEmail | null> {
   try {
     const baseUrl = new URL(website).origin
