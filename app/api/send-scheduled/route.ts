@@ -12,7 +12,8 @@ function isAuthorized(req: NextRequest): boolean {
   return req.headers.get('authorization') === `Bearer ${secret}`
 }
 
-const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 10)
+const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 20)
+const MAX_INITIAL_PER_BATCH = Number(process.env.MAX_INITIAL_PER_BATCH ?? 5)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 const FOLLOWUP1_DAYS = 5
@@ -28,16 +29,24 @@ type QueueItem = { prospect: Prospect; send_type: 'initial' | 'followup1' | 'fol
 
 async function buildQueue(): Promise<QueueItem[]> {
   const sb = getSupabaseAdmin()
-  const queue: QueueItem[] = []
   const [{ data: initial }, { data: f1 }, { data: f2 }] = await Promise.all([
     sb.from('prospects').select('*').eq('status', 'queued').order('fit_score', { ascending: false, nullsFirst: false }).limit(500),
-    sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)),
-    sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)),
+    sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).limit(500),
+    sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).limit(500),
   ])
-  for (const p of initial ?? []) queue.push({ prospect: p, send_type: 'initial' })
-  for (const p of f1 ?? []) queue.push({ prospect: p, send_type: 'followup1' })
-  for (const p of f2 ?? []) queue.push({ prospect: p, send_type: 'followup2' })
-  return queue.slice(0, MAX_PER_BATCH)
+
+  // Follow-ups are prioritized over new initial sends.
+  // Cap initial sends so follow-ups always have room in the batch.
+  const followups: QueueItem[] = []
+  for (const p of f2 ?? []) followups.push({ prospect: p, send_type: 'followup2' })
+  for (const p of f1 ?? []) followups.push({ prospect: p, send_type: 'followup1' })
+
+  const followupBatch = followups.slice(0, MAX_PER_BATCH)
+  const remainingSlots = Math.max(0, MAX_PER_BATCH - followupBatch.length)
+  const initialCap = Math.min(remainingSlots, MAX_INITIAL_PER_BATCH)
+  const initialBatch: QueueItem[] = (initial ?? []).slice(0, initialCap).map(p => ({ prospect: p, send_type: 'initial' as const }))
+
+  return [...followupBatch, ...initialBatch]
 }
 
 async function sendEmail(to: string, subject: string, html: string): Promise<string | null> {

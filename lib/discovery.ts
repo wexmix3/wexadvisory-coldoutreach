@@ -33,6 +33,15 @@ const SKIP_PATTERNS = [
   'privacy@', 'legal@', 'abuse@', 'postmaster@',
 ]
 
+// Domains that are never real prospect contacts
+const BLOCKED_DOMAINS = new Set([
+  'domain.com', 'email.com', 'mysite.com', 'mywebsite.com', 'yoursite.com',
+  'test.com', 'placeholder.com', 'sample.com',
+  'yelp.com', 'instagram.com', 'facebook.com', 'twitter.com', 'tiktok.com',
+  'linkedin.com', 'google.com', 'yahoo.com', 'hotmail.com',
+  'ir.com',  // investor relations redirects
+])
+
 const IMAGE_EXTS = /\.(webp|png|jpe?g|gif|svg|ico|bmp|tiff?)$/i
 const VALID_EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6}$/
 
@@ -48,6 +57,7 @@ export function isValidEmail(email: string): boolean {
   const tld = domain.split('.').pop() ?? ''
   if (IMAGE_EXTS.test('.' + tld)) return false
   if (SKIP_PATTERNS.some(p => email.includes(p))) return false
+  if (BLOCKED_DOMAINS.has(domain.toLowerCase())) return false
   return true
 }
 
