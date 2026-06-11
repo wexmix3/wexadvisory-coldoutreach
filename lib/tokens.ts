@@ -8,11 +8,14 @@ export function renderTemplate(
   prospect: Prospect,
   unsubscribeUrl: string
 ): string {
-  const contactName = prospect.contact_name?.split(' ')[0] || 'there'
+  const firstName = prospect.contact_name?.split(' ')[0]
+  const contactName = firstName || 'there'
+  const contactGreeting = firstName ? `, ${firstName}` : ''
   const customIntro = prospect.custom_intro || getIndustryHook(prospect.industry)
   return template
     .replace(/\{\{business_name\}\}/g, prospect.business_name)
     .replace(/\{\{contact_name\}\}/g, contactName)
+    .replace(/\{\{contact_greeting\}\}/g, contactGreeting)
     .replace(/\{\{industry\}\}/g, prospect.industry ?? 'your industry')
     .replace(/\{\{city\}\}/g, prospect.city ?? 'your city')
     .replace(/\{\{custom_intro\}\}/g, customIntro)
