@@ -50,14 +50,18 @@ function sanitizeEmail(raw: string): string {
   return raw.replace(/[\\'"<>\s;,]+$/g, '').toLowerCase().trim()
 }
 
+// HTML entity artifacts from bad scrapes: u003e, u003c, u0026, etc.
+const HTML_ENTITY_RE = /u00[0-9a-f]{2}/i
+
 export function isValidEmail(email: string): boolean {
   if (!VALID_EMAIL_RE.test(email)) return false
-  const domain = email.split('@')[1] ?? ''
+  const [local, domain] = [email.split('@')[0] ?? '', email.split('@')[1] ?? '']
   if (IMAGE_EXTS.test(domain)) return false
   const tld = domain.split('.').pop() ?? ''
   if (IMAGE_EXTS.test('.' + tld)) return false
   if (SKIP_PATTERNS.some(p => email.includes(p))) return false
   if (BLOCKED_DOMAINS.has(domain.toLowerCase())) return false
+  if (HTML_ENTITY_RE.test(local)) return false
   return true
 }
 

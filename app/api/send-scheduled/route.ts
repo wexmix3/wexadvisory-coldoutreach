@@ -12,8 +12,8 @@ function isAuthorized(req: NextRequest): boolean {
   return req.headers.get('authorization') === `Bearer ${secret}`
 }
 
-const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 20)
-const MAX_INITIAL_PER_BATCH = Number(process.env.MAX_INITIAL_PER_BATCH ?? 5)
+const MAX_INITIAL_PER_BATCH = Number(process.env.MAX_INITIAL_PER_BATCH ?? 10)
+const MAX_FOLLOWUP_PER_BATCH = Number(process.env.MAX_FOLLOWUP_PER_BATCH ?? 10)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 const FOLLOWUP1_DAYS = 5
@@ -31,20 +31,19 @@ async function buildQueue(): Promise<QueueItem[]> {
   const sb = getSupabaseAdmin()
   const [{ data: initial }, { data: f1 }, { data: f2 }] = await Promise.all([
     sb.from('prospects').select('*').eq('status', 'queued').order('fit_score', { ascending: false, nullsFirst: false }).limit(500),
-    sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).limit(500),
-    sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).limit(500),
+    // Order by sent_at ASC so prospects waiting the longest go first
+    sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).order('initial_sent_at', { ascending: true }).limit(500),
+    sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).order('followup1_sent_at', { ascending: true }).limit(500),
   ])
 
-  // Follow-ups are prioritized over new initial sends.
-  // Cap initial sends so follow-ups always have room in the batch.
-  const followups: QueueItem[] = []
-  for (const p of f2 ?? []) followups.push({ prospect: p, send_type: 'followup2' })
-  for (const p of f1 ?? []) followups.push({ prospect: p, send_type: 'followup1' })
+  // f2 before f1, both sorted oldest-first within their group
+  const followups: QueueItem[] = [
+    ...(f2 ?? []).map(p => ({ prospect: p, send_type: 'followup2' as const })),
+    ...(f1 ?? []).map(p => ({ prospect: p, send_type: 'followup1' as const })),
+  ]
 
-  const followupBatch = followups.slice(0, MAX_PER_BATCH)
-  const remainingSlots = Math.max(0, MAX_PER_BATCH - followupBatch.length)
-  const initialCap = Math.min(remainingSlots, MAX_INITIAL_PER_BATCH)
-  const initialBatch: QueueItem[] = (initial ?? []).slice(0, initialCap).map(p => ({ prospect: p, send_type: 'initial' as const }))
+  const followupBatch = followups.slice(0, MAX_FOLLOWUP_PER_BATCH)
+  const initialBatch: QueueItem[] = (initial ?? []).slice(0, MAX_INITIAL_PER_BATCH).map(p => ({ prospect: p, send_type: 'initial' as const }))
 
   return [...followupBatch, ...initialBatch]
 }
