@@ -35,6 +35,13 @@ type LogRow = {
   sent_at: string
 }
 
+type TodayBatch = {
+  sent: number
+  failed: number
+  lastSentAt: string | null
+  byTemplate: { type: string; sent: number; failed: number }[]
+}
+
 type ProspectRow = {
   id: string
   industry: string | null
@@ -53,7 +60,11 @@ type ActivityItem = { businessName: string; templateType: string; sentAt: string
 async function getAnalyticsData() {
   const sb = getSupabaseAdmin()
 
-  const [logsRes, prospectsRes] = await Promise.all([
+  const todayUtc = new Date()
+  todayUtc.setUTCHours(0, 0, 0, 0)
+  const todayStr = todayUtc.toISOString()
+
+  const [logsRes, prospectsRes, todayLogsRes] = await Promise.all([
     sb
       .from('email_log')
       .select('template_type, status, opened_at, clicked_at, prospect_id, sent_at')
@@ -63,10 +74,27 @@ async function getAnalyticsData() {
       .from('prospects')
       .select('id, industry, status, initial_sent_at, replied_at, business_name')
       .limit(5000),
+    sb
+      .from('email_log')
+      .select('template_type, status, sent_at')
+      .gte('sent_at', todayStr)
+      .order('sent_at', { ascending: false }),
   ])
 
   const logs = (logsRes.data ?? []) as LogRow[]
   const prospects = (prospectsRes.data ?? []) as ProspectRow[]
+  const todayLogs = (todayLogsRes.data ?? []) as Pick<LogRow, 'template_type' | 'status' | 'sent_at'>[]
+
+  const todayBatch: TodayBatch = {
+    sent: todayLogs.filter((l) => l.status === 'sent').length,
+    failed: todayLogs.filter((l) => l.status === 'failed').length,
+    lastSentAt: todayLogs.find((l) => l.status === 'sent')?.sent_at ?? null,
+    byTemplate: ['initial', 'followup1', 'followup2'].map((type) => ({
+      type,
+      sent: todayLogs.filter((l) => l.template_type === type && l.status === 'sent').length,
+      failed: todayLogs.filter((l) => l.template_type === type && l.status === 'failed').length,
+    })),
+  }
 
   // Prospect lookup map (id → prospect)
   const prospectMap = new Map(prospects.map((p) => [p.id, p]))
@@ -162,6 +190,7 @@ async function getAnalyticsData() {
     avgDaysToReply,
     recentReplies,
     recentActivity,
+    todayBatch,
   }
 }
 
@@ -248,6 +277,7 @@ export default async function AnalyticsPage() {
     avgDaysToReply,
     recentReplies,
     recentActivity,
+    todayBatch,
   } = await getAnalyticsData()
 
   const funnelRows = [
@@ -278,6 +308,64 @@ export default async function AnalyticsPage() {
         <p style={{ fontSize: '13px', color: '#64748b', marginTop: '2px', marginBottom: 0 }}>
           All-time campaign performance
         </p>
+      </div>
+
+      {/* Today's Batch */}
+      <div
+        style={{
+          background: '#1e293b',
+          borderRadius: '10px',
+          border: todayBatch.sent > 0 ? '1px solid #1d4ed8' : '1px solid #334155',
+          padding: '18px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '24px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div
+            style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              background: todayBatch.sent > 0 ? '#3b82f6' : '#334155',
+              flexShrink: 0,
+            }}
+          />
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '0.8px', textTransform: 'uppercase', color: '#64748b' }}>
+              Today&apos;s Batch
+            </div>
+            <div style={{ fontSize: '13px', color: '#94a3b8', marginTop: '2px' }}>
+              {todayBatch.lastSentAt
+                ? `Last send ${relativeTime(todayBatch.lastSentAt)}`
+                : 'Cron not yet run today'}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '32px', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '24px', fontWeight: 700, color: '#3b82f6', lineHeight: 1 }}>{todayBatch.sent}</div>
+            <div style={{ fontSize: '11px', color: '#64748b', marginTop: '3px' }}>Sent</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '24px', fontWeight: 700, color: todayBatch.failed > 0 ? '#ef4444' : '#334155', lineHeight: 1 }}>{todayBatch.failed}</div>
+            <div style={{ fontSize: '11px', color: '#64748b', marginTop: '3px' }}>Failed</div>
+          </div>
+          <div style={{ display: 'flex', gap: '16px', paddingLeft: '16px', borderLeft: '1px solid #334155' }}>
+            {todayBatch.byTemplate.map((t) => (
+              <div key={t.type} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '15px', fontWeight: 600, color: t.sent > 0 ? '#94a3b8' : '#475569', lineHeight: 1 }}>{t.sent}</div>
+                <div style={{ fontSize: '10px', color: '#475569', marginTop: '3px', letterSpacing: '0.5px' }}>
+                  {t.type === 'initial' ? 'Initial' : t.type === 'followup1' ? 'F/U 1' : 'F/U 2'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* KPI row */}
