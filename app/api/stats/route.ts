@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 
-const sb = getSupabaseAdmin()
-
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  const sb = getSupabaseAdmin()
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const todayIso = today.toISOString()

@@ -14,6 +14,7 @@ export async function PATCH(
   for (const key of allowed) {
     if (key in body) update[key] = body[key]
   }
+  if (body.status === 'replied') update.replied_at = new Date().toISOString()
   const { error } = await sb.from('prospects').update(update).eq('id', params.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

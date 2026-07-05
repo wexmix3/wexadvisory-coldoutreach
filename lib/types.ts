@@ -44,6 +44,9 @@ export interface EmailLog {
   resend_id: string | null
   sent_at: string
   status: 'sent' | 'failed' | 'bounced'
+  reply_category: 'interested' | 'wrong_person' | 'not_now' | 'not_interested' | 'unsubscribe' | null
+  opened_at: string | null
+  clicked_at: string | null
 }
 
 export interface Template {

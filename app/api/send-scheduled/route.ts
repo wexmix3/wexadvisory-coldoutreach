@@ -13,6 +13,7 @@ function isAuthorized(req: NextRequest): boolean {
 }
 
 const MAX_INITIAL_PER_BATCH = Number(process.env.MAX_INITIAL_PER_BATCH ?? 10)
+const MIN_FIT_SCORE = Number(process.env.MIN_FIT_SCORE ?? 50)
 const MAX_FOLLOWUP_PER_BATCH = Number(process.env.MAX_FOLLOWUP_PER_BATCH ?? 10)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
@@ -30,7 +31,7 @@ type QueueItem = { prospect: Prospect; send_type: 'initial' | 'followup1' | 'fol
 async function buildQueue(): Promise<QueueItem[]> {
   const sb = getSupabaseAdmin()
   const [{ data: initial }, { data: f1 }, { data: f2 }] = await Promise.all([
-    sb.from('prospects').select('*').eq('status', 'queued').order('fit_score', { ascending: false, nullsFirst: false }).limit(500),
+    sb.from('prospects').select('*').eq('status', 'queued').not('fit_score', 'is', null).gte('fit_score', MIN_FIT_SCORE).order('fit_score', { ascending: false, nullsFirst: false }).limit(500),
     // Order by sent_at ASC so prospects waiting the longest go first
     sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).order('initial_sent_at', { ascending: true }).limit(500),
     sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).order('followup1_sent_at', { ascending: true }).limit(500),

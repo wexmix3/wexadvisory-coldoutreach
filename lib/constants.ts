@@ -22,26 +22,22 @@ export const PROSPECT_CATEGORIES = [
   'Architecture firms',
 ]
 
+export const TOP_CATEGORIES = [
+  'Real estate agencies',
+  'Law firms',
+  'Accounting firms',
+  'Property management companies',
+  'Healthcare clinics',
+  'Financial advisors',
+  'Insurance agencies',
+  'Business consulting firms',
+]
+
 export const US_CITIES = [
-  'New York, NY', 'Los Angeles, CA', 'Chicago, IL', 'Houston, TX', 'Phoenix, AZ',
-  'Philadelphia, PA', 'San Antonio, TX', 'San Diego, CA', 'Dallas, TX', 'San Jose, CA',
-  'Austin, TX', 'Jacksonville, FL', 'Fort Worth, TX', 'Columbus, OH', 'Charlotte, NC',
-  'San Francisco, CA', 'Indianapolis, IN', 'Seattle, WA', 'Denver, CO', 'Nashville, TN',
-  'Oklahoma City, OK', 'El Paso, TX', 'Washington, DC', 'Las Vegas, NV', 'Louisville, KY',
-  'Memphis, TN', 'Portland, OR', 'Baltimore, MD', 'Milwaukee, WI', 'Albuquerque, NM',
-  'Tucson, AZ', 'Fresno, CA', 'Mesa, AZ', 'Sacramento, CA', 'Atlanta, GA',
-  'Kansas City, MO', 'Omaha, NE', 'Colorado Springs, CO', 'Raleigh, NC', 'Miami, FL',
-  'Long Beach, CA', 'Virginia Beach, VA', 'Minneapolis, MN', 'Tampa, FL', 'New Orleans, LA',
-  'Arlington, TX', 'Bakersfield, CA', 'Anaheim, CA', 'Aurora, CO', 'Corpus Christi, TX',
-  'Riverside, CA', 'Lexington, KY', 'St. Louis, MO', 'Pittsburgh, PA', 'Stockton, CA',
-  'Cincinnati, OH', 'St. Paul, MN', 'Toledo, OH', 'Greensboro, NC', 'Newark, NJ',
-  'Plano, TX', 'Henderson, NV', 'Orlando, FL', 'Chandler, AZ', 'St. Petersburg, FL',
-  'Norfolk, VA', 'Madison, WI', 'Durham, NC', 'Lubbock, TX', 'Winston-Salem, NC',
-  'Garland, TX', 'Glendale, AZ', 'Hialeah, FL', 'Reno, NV', 'Baton Rouge, LA',
-  'Irvine, CA', 'Chesapeake, VA', 'Irving, TX', 'Scottsdale, AZ', 'Fremont, CA',
-  'Gilbert, AZ', 'San Bernardino, CA', 'Birmingham, AL', 'Rochester, NY', 'Richmond, VA',
-  'Spokane, WA', 'Des Moines, IA', 'Montgomery, AL', 'Tacoma, WA', 'Akron, OH',
-  'Providence, RI', 'Salt Lake City, UT', 'Knoxville, TN', 'Fort Lauderdale, FL',
-  'Shreveport, LA', 'Augusta, GA', 'Huntsville, AL', 'Grand Rapids, MI', 'Tallahassee, FL',
-  'Overland Park, KS', 'Glendale, CA', 'Columbus, GA', 'Cape Coral, FL', 'Little Rock, AR',
+  'New York, NY', 'Los Angeles, CA', 'Chicago, IL', 'Houston, TX', 'Dallas, TX',
+  'San Francisco, CA', 'Atlanta, GA', 'Miami, FL', 'Washington, DC', 'Seattle, WA',
+  'Denver, CO', 'Austin, TX', 'Philadelphia, PA', 'Charlotte, NC', 'Minneapolis, MN',
+  'Nashville, TN', 'Phoenix, AZ', 'Raleigh, NC', 'Tampa, FL', 'Portland, OR',
+  'San Diego, CA', 'Boston, MA', 'Detroit, MI', 'Ann Arbor, MI', 'Grand Rapids, MI',
+  'Salt Lake City, UT', 'Indianapolis, IN', 'Columbus, OH', 'Kansas City, MO', 'Pittsburgh, PA',
 ]

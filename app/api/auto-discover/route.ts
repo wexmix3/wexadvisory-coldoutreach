@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { discoverProspects } from '@/lib/discovery'
-import { US_CITIES, PROSPECT_CATEGORIES } from '@/lib/constants'
+import { US_CITIES, PROSPECT_CATEGORIES, TOP_CATEGORIES } from '@/lib/constants'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -13,7 +13,13 @@ function isAuthorized(req: NextRequest): boolean {
 }
 
 function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
+  return arr[Math.floor(Math.random() * arr.length)]!
+}
+
+function pickCategory(): string {
+  const useTop = Math.random() < 0.7
+  const pool = useTop ? TOP_CATEGORIES : PROSPECT_CATEGORIES
+  return pool[Math.floor(Math.random() * pool.length)]!
 }
 
 export async function GET(req: NextRequest) {
@@ -22,7 +28,7 @@ export async function GET(req: NextRequest) {
   }
 
   const city = pick(US_CITIES)
-  const category = pick(PROSPECT_CATEGORIES)
+  const category = pickCategory()
 
   let prospects: Awaited<ReturnType<typeof discoverProspects>>['prospects'] = []
   let placesFound = 0

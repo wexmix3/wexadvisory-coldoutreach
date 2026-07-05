@@ -50,7 +50,12 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(data.error)
       setProspects(data.prospects)
       setDebugStats(data.debug ?? null)
-      setSelected(new Set(data.prospects.map((p: DiscoveredProspect) => p.email)))
+      // Pre-select only prospects not already in the system
+      setSelected(new Set(
+        data.prospects
+          .filter((p: DiscoveredProspect) => !p.existing_status)
+          .map((p: DiscoveredProspect) => p.email)
+      ))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Discovery failed')
     } finally {
@@ -83,11 +88,13 @@ export default function DiscoverPage() {
     }
   }
 
+  const newProspects = prospects.filter(p => !p.existing_status)
+
   function toggleAll() {
-    if (selected.size === prospects.length) {
+    if (selected.size === newProspects.length) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(prospects.map(p => p.email)))
+      setSelected(new Set(newProspects.map(p => p.email)))
     }
   }
 
@@ -160,9 +167,9 @@ export default function DiscoverPage() {
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600">
             Found <strong>{debugStats.placesFound}</strong> businesses on Google →{' '}
             <strong>{debugStats.withWebsite}</strong> had websites →{' '}
-            <strong className={debugStats.withEmail === 0 ? 'text-red-600' : 'text-green-700'}>{debugStats.withEmail}</strong> had verified emails via Hunter
+            <strong className={debugStats.withEmail === 0 ? 'text-red-600' : 'text-green-700'}>{debugStats.withEmail}</strong> had emails found
             {debugStats.withEmail === 0 && debugStats.withWebsite > 0 && (
-              <span className="text-red-600"> — Hunter couldn&apos;t find emails for this category. Try a different industry or check your Hunter.io quota.</span>
+              <span className="text-red-600"> — No emails found via website scraping or Hunter. Try a different industry.</span>
             )}
           </div>
         )}
@@ -174,13 +181,16 @@ export default function DiscoverPage() {
             <div className="flex items-center gap-3">
               <input
                 type="checkbox"
-                checked={selected.size === prospects.length}
+                checked={newProspects.length > 0 && selected.size === newProspects.length}
                 onChange={toggleAll}
                 className="h-4 w-4 rounded border-gray-300"
               />
               <span className="text-sm font-medium text-gray-700">
-                {prospects.length} prospect{prospects.length !== 1 ? 's' : ''} found
-                {selected.size > 0 && ` · ${selected.size} selected`}
+                {prospects.length} found
+                {prospects.length - newProspects.length > 0 && (
+                  <span className="text-amber-600 ml-1">· {prospects.length - newProspects.length} already in system</span>
+                )}
+                {selected.size > 0 && <span className="text-blue-600"> · {selected.size} selected</span>}
               </span>
             </div>
             <button
@@ -192,51 +202,63 @@ export default function DiscoverPage() {
             </button>
           </div>
           <div className="divide-y divide-gray-50">
-            {prospects.map(p => (
-              <div
-                key={p.email}
-                className="flex items-center gap-4 px-6 py-3 hover:bg-gray-50"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(p.email)}
-                  onChange={() => {
-                    const next = new Set(selected)
-                    if (next.has(p.email)) { next.delete(p.email) } else { next.add(p.email) }
-                    setSelected(next)
-                  }}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-gray-900">{p.business_name}</span>
-                    {p.hunter_confidence >= 80 && (
-                      <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
-                        {p.hunter_confidence}% confidence
+            {prospects.map(p => {
+              const isExisting = !!p.existing_status
+              return (
+                <div
+                  key={p.email}
+                  className={`flex items-center gap-4 px-6 py-3 ${isExisting ? 'bg-gray-50 opacity-70' : 'hover:bg-gray-50'}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(p.email)}
+                    disabled={isExisting}
+                    onChange={() => {
+                      if (isExisting) return
+                      const next = new Set(selected)
+                      if (next.has(p.email)) { next.delete(p.email) } else { next.add(p.email) }
+                      setSelected(next)
+                    }}
+                    className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`font-medium text-sm ${isExisting ? 'text-gray-400' : 'text-gray-900'}`}>
+                        {p.business_name}
                       </span>
-                    )}
-                    {p.hunter_confidence < 80 && p.hunter_confidence >= 50 && (
-                      <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">
-                        {p.hunter_confidence}% confidence
-                      </span>
-                    )}
+                      {isExisting && (
+                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                          {p.existing_status!.replace(/_/g, ' ')}
+                        </span>
+                      )}
+                      {!isExisting && p.hunter_confidence >= 80 && (
+                        <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                          {p.hunter_confidence}% confidence
+                        </span>
+                      )}
+                      {!isExisting && p.hunter_confidence < 80 && p.hunter_confidence >= 50 && (
+                        <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">
+                          {p.hunter_confidence}% confidence
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {p.email} {p.contact_name ? `· ${p.contact_name}` : ''} · {p.city}, {p.state}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500 mt-0.5">
-                    {p.email} {p.contact_name ? `· ${p.contact_name}` : ''} · {p.city}, {p.state}
-                  </div>
+                  {p.website && (
+                    <a
+                      href={p.website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 hover:underline shrink-0"
+                    >
+                      Website ↗
+                    </a>
+                  )}
                 </div>
-                {p.website && (
-                  <a
-                    href={p.website}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline shrink-0"
-                  >
-                    Website ↗
-                  </a>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

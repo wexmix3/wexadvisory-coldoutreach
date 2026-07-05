@@ -8,7 +8,7 @@ const TYPE_LABEL: Record<string, string> = {
   followup2: 'Follow-up 2 (Day 12)',
 }
 
-const TOKENS = ['{{business_name}}', '{{contact_name}}', '{{industry}}', '{{city}}', '{{unsubscribe_url}}']
+const TOKENS = ['{{business_name}}', '{{contact_name}}', '{{industry}}', '{{city}}', '{{calendly_url}}', '{{unsubscribe_url}}']
 
 export default function TemplatesPage() {
   const [templates, setTemplates] = useState<Template[]>([])
