@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
     templates.map((t: { type: string; subject: string; body_html: string }) => [t.type, t])
   )
 
-  const appUrl = req.nextUrl.origin
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin
   const results = { sent: 0, failed: 0, errors: [] as string[] }
 
   for (const { prospect, send_type } of queue) {
