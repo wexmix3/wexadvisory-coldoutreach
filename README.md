@@ -34,3 +34,11 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Pre-commit lint hook
+
+Every commit runs `eslint --fix` on staged `.ts`/`.tsx`/`.js`/`.jsx` files via husky + lint-staged (`.husky/pre-commit`). Auto-fixable issues (e.g. `prefer-const`) get fixed and included in the commit automatically. Issues ESLint can't auto-fix (e.g. `no-explicit-any`) block the commit and print the remaining errors — fix them and commit again.
+
+Hooks install automatically on `npm install` via the `prepare` script.
+
+In a genuine emergency you can bypass the hook with `git commit --no-verify`, but that's not the default path — fix the lint error instead whenever possible.
