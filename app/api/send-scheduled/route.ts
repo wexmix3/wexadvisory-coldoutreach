@@ -72,7 +72,7 @@ async function sendEmail(to: string, subject: string, html: string, unsubUrl: st
   return data.id ?? null
 }
 
-const RESUME_DATE = new Date('2026-06-06T00:00:00Z')
+const RESUME_DATE = new Date('2026-07-22T00:00:00Z')
 
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (new Date() < RESUME_DATE) {
-    return NextResponse.json({ sent: 0, skipped: true, message: 'Paused until 2026-06-06 for domain reputation recovery' })
+    return NextResponse.json({ sent: 0, skipped: true, message: 'Paused until 2026-07-22 for Gmail spam-reputation reset -- see state/worksheets/outreach-tool-deliverability-2026-07-15.md' })
   }
 
   const sb = getSupabaseAdmin()
