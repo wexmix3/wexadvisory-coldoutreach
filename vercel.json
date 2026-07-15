@@ -9,6 +9,10 @@
       "schedule": "0 11 * * 1-5"
     },
     {
+      "path": "/api/verify-contacts",
+      "schedule": "30 12 * * 1-5"
+    },
+    {
       "path": "/api/send-scheduled",
       "schedule": "0 14 * * 1-5"
     },
