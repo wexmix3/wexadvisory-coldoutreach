@@ -49,13 +49,23 @@ async function buildQueue(): Promise<QueueItem[]> {
   return [...followupBatch, ...initialBatch]
 }
 
-async function sendEmail(to: string, subject: string, html: string): Promise<string | null> {
+async function sendEmail(to: string, subject: string, html: string, unsubUrl: string): Promise<string | null> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey || apiKey.startsWith('re_your')) throw new Error('RESEND_API_KEY not configured')
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM, to, reply_to: REPLY_TO, subject, html }),
+    body: JSON.stringify({
+      from: FROM,
+      to,
+      reply_to: REPLY_TO,
+      subject,
+      html,
+      headers: {
+        'List-Unsubscribe': `<${unsubUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.message ?? 'Resend error')
@@ -98,7 +108,7 @@ export async function GET(req: NextRequest) {
     const html = renderTemplate(template.body_html, prospect, unsubUrl)
 
     try {
-      const resendId = await sendEmail(prospect.email, subject, html)
+      const resendId = await sendEmail(prospect.email, subject, html, unsubUrl)
       const now = new Date().toISOString()
       const statusMap: Record<string, { status: string; field: string }> = {
         initial: { status: 'initial_sent', field: 'initial_sent_at' },

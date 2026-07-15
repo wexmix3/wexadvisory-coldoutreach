@@ -3,16 +3,31 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+async function markUnsubscribed(id: string) {
   const sb = getSupabaseAdmin()
-  const id = new URL(req.url).searchParams.get('id')
-  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
-
-  const { error } = await sb
+  return sb
     .from('prospects')
     .update({ status: 'unsubscribed' })
     .eq('id', id)
     .neq('status', 'unsubscribed')
+}
+
+// One-click unsubscribe per RFC 8058 (List-Unsubscribe-Post header) — Gmail/Yahoo
+// POST here instead of opening the link when a user clicks "Unsubscribe" in their client.
+export async function POST(req: NextRequest) {
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
+  const { error } = await markUnsubscribed(id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
+
+export async function GET(req: NextRequest) {
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
+  const { error } = await markUnsubscribed(id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

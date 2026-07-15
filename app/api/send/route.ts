@@ -9,7 +9,7 @@ const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 10)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 
-async function sendEmail(to: string, subject: string, html: string): Promise<string | null> {
+async function sendEmail(to: string, subject: string, html: string, unsubUrl: string): Promise<string | null> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey || apiKey.startsWith('re_your')) throw new Error('RESEND_API_KEY not configured')
 
@@ -19,7 +19,17 @@ async function sendEmail(to: string, subject: string, html: string): Promise<str
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: FROM, to, reply_to: REPLY_TO, subject, html }),
+    body: JSON.stringify({
+      from: FROM,
+      to,
+      reply_to: REPLY_TO,
+      subject,
+      html,
+      headers: {
+        'List-Unsubscribe': `<${unsubUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    }),
   })
 
   const data = await res.json()
@@ -62,7 +72,7 @@ export async function POST(req: NextRequest) {
       const html = renderTemplate(template.body_html, prospect, unsubUrl)
 
       try {
-        const resendId = await sendEmail(prospect.email, subject, html)
+        const resendId = await sendEmail(prospect.email, subject, html, unsubUrl)
 
         // Log the send
         await sb.from('email_log').insert({
