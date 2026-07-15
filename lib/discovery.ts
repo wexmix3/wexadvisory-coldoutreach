@@ -94,7 +94,8 @@ function pickBestEmail(emails: string[], domain: string): string | null {
   return valid.find(e => e.split('@')[1]?.includes(domainRoot)) ?? valid[0] ?? null
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// Quota-outage fallback only (see findEmail) -- confidence pinned below Hunter's
+// own 50 threshold so these are visibly distinguishable in hunter_confidence later.
 async function scrapeEmail(website: string): Promise<FoundEmail | null> {
   try {
     const baseUrl = new URL(website).origin
@@ -112,16 +113,21 @@ async function scrapeEmail(website: string): Promise<FoundEmail | null> {
     const email = pickBestEmail(allEmails, domain)
     if (!email) return null
 
-    return { value: email, confidence: 50 }
+    return { value: email, confidence: 40 }
   } catch { return null }
 }
 
 // Decision-maker titles to prioritize — these are the people who buy AI consulting
 const DECISION_MAKER_TITLES = ['ceo', 'founder', 'owner', 'president', 'partner', 'managing director', 'chief operating', 'vp of operations', 'director of operations', 'head of operations', 'general manager', 'principal', 'director']
 
-async function hunterEmail(domain: string): Promise<FoundEmail | null> {
+type HunterResult =
+  | { status: 'found'; email: FoundEmail }
+  | { status: 'quota_exceeded' }
+  | { status: 'not_found' }
+
+async function hunterEmail(domain: string): Promise<HunterResult> {
   const apiKey = process.env.HUNTER_API_KEY
-  if (!apiKey || apiKey.startsWith('your_')) return null
+  if (!apiKey || apiKey.startsWith('your_')) return { status: 'not_found' }
 
   try {
     const url = new URL('https://api.hunter.io/v2/domain-search')
@@ -132,29 +138,36 @@ async function hunterEmail(domain: string): Promise<FoundEmail | null> {
     const res = await fetch(url.toString())
     const data = await res.json()
 
-    if (data.errors?.some((e: { code: number }) => e.code === 429)) return null
+    if (data.errors?.some((e: { code: number }) => e.code === 429)) return { status: 'quota_exceeded' }
 
     const emails: Array<{ value: string; first_name?: string; last_name?: string; confidence: number; position?: string }> = data.data?.emails ?? []
-    if (emails.length === 0) return null
+    if (emails.length === 0) return { status: 'not_found' }
 
     // Require a named contact — skip if no first name (generic contact@/info@ type)
     const namedEmails = emails.filter(e => e.first_name && e.first_name.length > 0)
-    if (namedEmails.length === 0) return null
+    if (namedEmails.length === 0) return { status: 'not_found' }
 
     // Prefer decision-maker titles first, then highest confidence among named contacts
     const byRole = namedEmails.find(e => DECISION_MAKER_TITLES.some(r => (e.position ?? '').toLowerCase().includes(r)))
     const best = byRole ?? namedEmails.sort((a, b) => b.confidence - a.confidence)[0]
 
     // Require minimum confidence threshold
-    if (best.confidence < 50) return null
+    if (best.confidence < 50) return { status: 'not_found' }
 
-    return { value: best.value, first_name: best.first_name, last_name: best.last_name, confidence: best.confidence }
-  } catch { return null }
+    return { status: 'found', email: { value: best.value, first_name: best.first_name, last_name: best.last_name, confidence: best.confidence } }
+  } catch { return { status: 'not_found' } }
 }
 
-// Only use Hunter.io — scraped generic emails (contact@, info@) land in spam
-async function findEmail(_website: string, domain: string): Promise<FoundEmail | null> {
-  return hunterEmail(domain)
+// Hunter.io is the primary source (named contacts only -- generic contact@/info@
+// addresses hurt sender reputation). Fall back to scraping the site itself only
+// when Hunter's quota is exhausted, not when Hunter simply found no named contact --
+// scraping tends to surface generic aliases, which is a deliberate quality tradeoff
+// made only to keep discovery running during a quota outage.
+async function findEmail(website: string, domain: string): Promise<FoundEmail | null> {
+  const result = await hunterEmail(domain)
+  if (result.status === 'found') return result.email
+  if (result.status === 'quota_exceeded') return scrapeEmail(website)
+  return null
 }
 
 export async function getPlaces(city: string, category: string): Promise<NewPlace[]> {
