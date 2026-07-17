@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { discoverProspects } from '@/lib/discovery'
+import { discoverProspects, PlacesQuotaExceededError } from '@/lib/discovery'
 import { US_CITIES, PROSPECT_CATEGORIES, TOP_CATEGORIES } from '@/lib/constants'
+import { triggerMapsScraperFallback } from '@/lib/maps-scraper-fallback'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -40,6 +41,15 @@ export async function GET(req: NextRequest) {
     unresolved = result.unresolved
     placesFound = result.placesFound
   } catch (err) {
+    if (err instanceof PlacesQuotaExceededError) {
+      const dispatched = await triggerMapsScraperFallback(city, category)
+      return NextResponse.json({
+        error: err.message,
+        city,
+        category,
+        fallbackDispatched: dispatched,
+      }, { status: dispatched ? 202 : 500 })
+    }
     return NextResponse.json({
       error: err instanceof Error ? err.message : 'Discovery failed',
       city,

@@ -1,0 +1,46 @@
+name: Maps Scraper Fallback
+
+# Fires only when auto-discover's Google Places call hits quota/billing exhaustion
+# (see lib/maps-scraper-fallback.ts). Not a cron -- purely event-driven, so it costs
+# nothing when Places is healthy. gosom/google-maps-scraper stands in for Places for
+# one city/category, self-hosted on the runner (no external service, no proxies).
+on:
+  repository_dispatch:
+    types: [maps-scraper-fallback]
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build query
+        run: |
+          mkdir -p out
+          echo "${{ github.event.client_payload.category }} in ${{ github.event.client_payload.city }}" > queries.txt
+
+      - name: Run scraper
+        run: |
+          docker run --rm \
+            -v "$PWD/queries.txt:/queries.txt:ro" \
+            -v "$PWD/out:/out" \
+            gosom/google-maps-scraper \
+            -input /queries.txt \
+            -json \
+            -results /out/results.json \
+            -depth 1 \
+            -email \
+            -exit-on-inactivity 2m
+
+      - name: Upsert results to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FALLBACK_CITY: ${{ github.event.client_payload.city }}
+          FALLBACK_CATEGORY: ${{ github.event.client_payload.category }}
+        run: node scripts/maps-scraper-upsert.mjs

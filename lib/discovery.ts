@@ -182,6 +182,11 @@ async function findEmail(website: string, domain: string): Promise<FoundEmail | 
   return null
 }
 
+// Thrown specifically on Places quota/billing exhaustion (429/403) so callers can
+// distinguish "nothing left to spend" from a genuine config/request bug -- same
+// pattern as HunterResult's quota_exceeded status below.
+export class PlacesQuotaExceededError extends Error {}
+
 export async function getPlaces(city: string, category: string): Promise<NewPlace[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
   if (!apiKey || apiKey.startsWith('your_')) throw new Error('GOOGLE_PLACES_API_KEY not configured')
@@ -197,6 +202,9 @@ export async function getPlaces(city: string, category: string): Promise<NewPlac
   })
 
   const data = await res.json()
+  if (res.status === 429 || res.status === 403) {
+    throw new PlacesQuotaExceededError(`Google Places quota/billing error: ${data.error?.message ?? 'Unknown'}`)
+  }
   if (!res.ok) throw new Error(`Google Places error: ${data.error?.message ?? 'Unknown'}`)
   return data.places ?? []
 }
