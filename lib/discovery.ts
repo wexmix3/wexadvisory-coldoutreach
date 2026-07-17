@@ -13,6 +13,18 @@ export interface DiscoveredProspect {
   existing_status?: string
 }
 
+// Candidates where Hunter found no named contact (not a quota outage — a genuine
+// "nothing here"). Previously dropped silently with zero record they existed.
+// Not inserted into `prospects` (email is required there) — surfaced for visibility
+// so they can be routed to a non-email channel (e.g. LinkedIn) instead of vanishing.
+export interface UnresolvedCandidate {
+  business_name: string
+  website: string
+  industry: string
+  city: string
+  state: string
+}
+
 interface NewPlace {
   id: string
   displayName?: { text: string }
@@ -191,6 +203,7 @@ export async function getPlaces(city: string, category: string): Promise<NewPlac
 
 export async function discoverProspects(city: string, category: string): Promise<{
   prospects: DiscoveredProspect[]
+  unresolved: UnresolvedCandidate[]
   placesFound: number
   withWebsite: number
 }> {
@@ -206,13 +219,24 @@ export async function discoverProspects(city: string, category: string): Promise
   )
 
   const prospects: DiscoveredProspect[] = []
+  const unresolved: UnresolvedCandidate[] = []
 
   for (let i = 0; i < candidates.length; i++) {
     const result = emailResults[i]
-    if (result.status !== 'fulfilled' || !result.value) continue
-    const email = result.value
     const { place } = candidates[i]
     const address = place.formattedAddress ?? ''
+
+    if (result.status !== 'fulfilled' || !result.value) {
+      unresolved.push({
+        business_name: place.displayName?.text ?? 'Unknown',
+        website: place.websiteUri!,
+        industry: category,
+        city: parseCity(address) || city,
+        state: parseState(address),
+      })
+      continue
+    }
+    const email = result.value
 
     prospects.push({
       business_name: place.displayName?.text ?? 'Unknown',
@@ -227,5 +251,5 @@ export async function discoverProspects(city: string, category: string): Promise
     })
   }
 
-  return { prospects, placesFound: places.length, withWebsite: candidates.length }
+  return { prospects, unresolved, placesFound: places.length, withWebsite: candidates.length }
 }

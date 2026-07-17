@@ -31,11 +31,13 @@ export async function GET(req: NextRequest) {
   const category = pickCategory()
 
   let prospects: Awaited<ReturnType<typeof discoverProspects>>['prospects'] = []
+  let unresolved: Awaited<ReturnType<typeof discoverProspects>>['unresolved'] = []
   let placesFound = 0
 
   try {
     const result = await discoverProspects(city, category)
     prospects = result.prospects
+    unresolved = result.unresolved
     placesFound = result.placesFound
   } catch (err) {
     return NextResponse.json({
@@ -81,5 +83,13 @@ export async function GET(req: NextRequest) {
     placesFound,
     added,
     skipped: prospects.length - newProspects.length,
+    // Businesses Hunter found no named contact for (not a quota issue — genuinely
+    // nothing there). Previously dropped with zero trace. Not written to `prospects`
+    // (email is required there) — surfaced here so they're visible in cron run logs
+    // instead of vanishing. Durable storage (own table/column, or a different sink
+    // like a LinkedIn-outreach queue) is a deliberate follow-up, not done here —
+    // it's a schema/external-DB decision, not a code fix.
+    unresolvedNoEmail: unresolved.length,
+    unresolved: unresolved.slice(0, 20),
   })
 }

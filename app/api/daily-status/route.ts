@@ -22,8 +22,8 @@ async function sendNotificationEmail(
   last_sent_at: string | null,
   date: string
 ): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey) throw new Error('RESEND_API_KEY not configured')
+  const apiKey = process.env.RESEND_CONFIRMATION_API_KEY
+  if (!apiKey) throw new Error('RESEND_CONFIRMATION_API_KEY not configured')
 
   const noActivity = total_sent === 0 && total_failed === 0
   const subject = noActivity
