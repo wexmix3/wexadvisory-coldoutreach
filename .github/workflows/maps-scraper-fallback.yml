@@ -11,7 +11,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
@@ -29,9 +29,15 @@ jobs:
           # latest (Playwright-based) has a live upstream bug as of 2026-07-19 --
           # "could not install driver: driver exists but version not 1.60.0" --
           # matches open issues gosom/google-maps-scraper#187, #291, #302, #309.
-          # latest-rod uses the Rod browser-automation lib instead of Playwright-Go,
-          # sidestepping this driver-install path entirely.
-          docker run --rm \
+          # latest-rod uses the Rod browser-automation lib instead, sidestepping
+          # that driver-install path -- but has its own bug: after logging
+          # "exiting because of inactivity" it can hang indefinitely on shutdown
+          # instead of exiting. `timeout` bounds that so the job doesn't just
+          # burn the full 8-minute job budget waiting on a hung container --
+          # SIGTERM at 4m, SIGKILL 30s later if it's still not dead. `|| true`
+          # so a killed/non-zero scraper doesn't skip the upsert step below --
+          # if results.json was flushed before the hang, still use it.
+          timeout -k 30 4m docker run --rm \
             -v "$PWD/queries.txt:/queries.txt:ro" \
             -v "$PWD/out:/out" \
             gosom/google-maps-scraper:latest-rod \
@@ -40,7 +46,7 @@ jobs:
             -results /out/results.json \
             -depth 1 \
             -email \
-            -exit-on-inactivity 2m
+            -exit-on-inactivity 90s || true
 
       - name: Upsert results to Supabase
         env:
