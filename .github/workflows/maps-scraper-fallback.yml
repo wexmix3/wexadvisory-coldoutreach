@@ -26,11 +26,15 @@ jobs:
 
       - name: Run scraper
         run: |
+          # latest (Playwright-based) has a live upstream bug as of 2026-07-19 --
+          # "could not install driver: driver exists but version not 1.60.0" --
+          # matches open issues gosom/google-maps-scraper#187, #291, #302, #309.
+          # latest-rod uses the Rod browser-automation lib instead of Playwright-Go,
+          # sidestepping this driver-install path entirely.
           docker run --rm \
-            -v gmaps-playwright-cache:/opt \
             -v "$PWD/queries.txt:/queries.txt:ro" \
             -v "$PWD/out:/out" \
-            gosom/google-maps-scraper \
+            gosom/google-maps-scraper:latest-rod \
             -input /queries.txt \
             -json \
             -results /out/results.json \
