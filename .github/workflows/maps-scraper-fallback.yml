@@ -27,6 +27,7 @@ jobs:
       - name: Run scraper
         run: |
           docker run --rm \
+            -v gmaps-playwright-cache:/opt \
             -v "$PWD/queries.txt:/queries.txt:ro" \
             -v "$PWD/out:/out" \
             gosom/google-maps-scraper \
