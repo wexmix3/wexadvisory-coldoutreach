@@ -17,8 +17,9 @@ export async function POST(req: NextRequest) {
   let event: ResendEvent
   try { event = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
+  const sb = getSupabaseAdmin()
+
   try {
-    const sb = getSupabaseAdmin()
     const { type, data } = event
     const resendId = data?.email_id
     if (!resendId) return NextResponse.json({ ok: true })
@@ -45,8 +46,15 @@ export async function POST(req: NextRequest) {
         await sb.from('email_log').update({ clicked_at: now }).eq('id', logRow.id).is('clicked_at', null)
         break
     }
-  } catch {
-    // Always return 200 so Resend doesn't disable the webhook on transient errors
+  } catch (err) {
+    // Always return 200 so Resend doesn't disable the webhook on transient errors —
+    // but record it so a run of these isn't silently invisible.
+    await sb.from('webhook_failures').insert({
+      source: 'resend',
+      event_type: event?.type,
+      payload: event,
+      error_message: err instanceof Error ? err.message : String(err),
+    }).then(undefined, () => {})
   }
 
   return NextResponse.json({ ok: true })
