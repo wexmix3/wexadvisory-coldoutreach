@@ -23,6 +23,14 @@
     {
       "path": "/api/daily-status?notify=true",
       "schedule": "30 18 * * 1-5"
+    },
+    {
+      "path": "/api/dmarc-ingest",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/dmarc-weekly-summary",
+      "schedule": "0 7 * * 1"
     }
   ]
 }
