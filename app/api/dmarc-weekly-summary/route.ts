@@ -101,7 +101,7 @@ Write a concise plain-English summary (150-250 words) covering:
 3. Any IPs consistently failing DKIM/SPF alignment
 4. One clear recommendation if action is warranted, or "no action needed" if things look clean
 
-Format as HTML with short paragraphs and a bullet list where useful. No preamble, just the summary body.`
+Output raw HTML only: <p>, <ul>/<li>, <strong> tags. No markdown (no #, no **, no \`\`\` code fences), no preamble, just the summary body.`
 
   const message = await client.messages.create({
     model: process.env.DMARC_MODEL ?? 'claude-haiku-4-5-20251001',
@@ -109,10 +109,19 @@ Format as HTML with short paragraphs and a bullet list where useful. No preamble
     messages: [{ role: 'user', content: prompt }],
   })
 
-  const bodyHtml = message.content
+  const rawBody = message.content
     .filter((block) => block.type === 'text')
     .map((block) => (block as { text: string }).text)
     .join('\n')
+
+  // Defensive strip: models occasionally wrap HTML output in a markdown code fence
+  // despite being told not to. Never trust prose-only instructions for format (see
+  // harness-engineering-standards.md item 5).
+  const bodyHtml = rawBody
+    .trim()
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim()
 
   const dateLabel = new Date().toISOString().slice(0, 10)
   const draftId = await createDmarcSummaryDraft({
