@@ -28,6 +28,7 @@ function relativeTime(iso: string | null): string {
 
 type LogRow = {
   template_type: string
+  variant: number | null
   status: string
   opened_at: string | null
   clicked_at: string | null
@@ -51,7 +52,7 @@ type ProspectRow = {
   business_name: string
 }
 
-type TemplateStats = { sent: number; opens: number; clicks: number; bounced: number }
+type TemplateStats = { type: string; variant: number | null; sent: number; opens: number; clicks: number; bounced: number }
 type IndustryStats = { industry: string; sent: number; replied: number; replyRate: number }
 type ActivityItem = { businessName: string; templateType: string; sentAt: string }
 
@@ -67,7 +68,7 @@ async function getAnalyticsData() {
   const [logsRes, prospectsRes, todayLogsRes] = await Promise.all([
     sb
       .from('email_log')
-      .select('template_type, status, opened_at, clicked_at, prospect_id, sent_at')
+      .select('template_type, variant, status, opened_at, clicked_at, prospect_id, sent_at')
       .order('sent_at', { ascending: false })
       .limit(5000),
     sb
@@ -76,7 +77,7 @@ async function getAnalyticsData() {
       .limit(5000),
     sb
       .from('email_log')
-      .select('template_type, status, sent_at')
+      .select('template_type, variant, status, sent_at')
       .gte('sent_at', todayStr)
       .order('sent_at', { ascending: false }),
   ])
@@ -108,20 +109,22 @@ async function getAnalyticsData() {
   const totalUnsubscribed = prospects.filter((p) => p.status === 'unsubscribed').length
   const queued = prospects.filter((p) => p.status === 'queued').length
 
-  // By template
-  const byTemplate: Record<string, TemplateStats> = {
-    initial: { sent: 0, opens: 0, clicks: 0, bounced: 0 },
-    followup1: { sent: 0, opens: 0, clicks: 0, bounced: 0 },
-    followup2: { sent: 0, opens: 0, clicks: 0, bounced: 0 },
-  }
+  // By template + variant
+  const byTemplateMap: Record<string, TemplateStats> = {}
   for (const log of logs) {
-    const t = byTemplate[log.template_type]
-    if (!t) continue
+    const key = `${log.template_type}:${log.variant ?? '—'}`
+    if (!byTemplateMap[key]) {
+      byTemplateMap[key] = { type: log.template_type, variant: log.variant, sent: 0, opens: 0, clicks: 0, bounced: 0 }
+    }
+    const t = byTemplateMap[key]
     if (log.status === 'sent') t.sent++
     if (log.status === 'bounced') t.bounced++
     if (log.opened_at) t.opens++
     if (log.clicked_at) t.clicks++
   }
+  const byTemplate = Object.values(byTemplateMap).sort((a, b) =>
+    a.type === b.type ? (a.variant ?? 0) - (b.variant ?? 0) : a.type.localeCompare(b.type)
+  )
 
   // By industry (sorted by reply rate DESC)
   const industryMap: Record<string, { sent: number; replied: number }> = {}
@@ -476,10 +479,12 @@ export default async function AnalyticsPage() {
               </tr>
             </thead>
             <tbody>
-              {Object.entries(byTemplate).map(([type, data]) => (
-                <tr key={type} style={{ borderTop: '1px solid #334155' }}>
+              {byTemplate.length === 0 ? (
+                <tr><td colSpan={5} style={{ fontSize: '13px', color: '#475569', padding: '8px 0' }}>No data yet.</td></tr>
+              ) : byTemplate.map((data) => (
+                <tr key={`${data.type}:${data.variant}`} style={{ borderTop: '1px solid #334155' }}>
                   <td style={{ fontSize: '13px', color: '#e2e8f0', padding: '8px 0' }}>
-                    {TEMPLATE_LABELS[type] ?? type}
+                    {(TEMPLATE_LABELS[data.type] ?? data.type)}{data.variant ? ` · v${data.variant}` : ''}
                   </td>
                   <td style={{ fontSize: '13px', color: '#94a3b8', textAlign: 'right', padding: '8px 0' }}>
                     {data.sent}
