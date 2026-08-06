@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { renderTemplate } from '@/lib/tokens'
 import { QueueItem } from '@/app/api/queue/route'
+import { Template } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 10)
 const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
+
+// Client may pick a specific variant (so the preview it showed matches what
+// actually sends). If omitted, fall back to a random pick from the pool.
+type SendItem = QueueItem & { template_id?: string }
 
 async function sendEmail(to: string, subject: string, html: string, unsubUrl: string): Promise<string | null> {
   const apiKey = process.env.RESEND_API_KEY
@@ -40,7 +45,7 @@ async function sendEmail(to: string, subject: string, html: string, unsubUrl: st
 export async function POST(req: NextRequest) {
   const sb = getSupabaseAdmin()
   try {
-    const { items }: { items: QueueItem[] } = await req.json()
+    const { items }: { items: SendItem[] } = await req.json()
     if (!items?.length) return NextResponse.json({ error: 'No items provided' }, { status: 400 })
 
     const batch = items.slice(0, MAX_PER_BATCH)
@@ -52,15 +57,23 @@ export async function POST(req: NextRequest) {
       .select('*')
     if (tErr) throw tErr
 
-    const templateMap = Object.fromEntries(
-      templates.map((t: { id: string; type: string; subject: string; body_html: string }) => [t.type, t])
-    )
+    const templatesById: Record<string, Template> = {}
+    const templatesByType: Record<string, Template[]> = {}
+    for (const t of templates as Template[]) {
+      templatesById[t.id] = t
+      ;(templatesByType[t.type] ??= []).push(t)
+    }
 
     const results = { sent: 0, failed: 0, errors: [] as string[] }
 
     for (const item of batch) {
-      const { prospect, send_type } = item
-      const template = templateMap[send_type]
+      const { prospect, send_type, template_id } = item
+      const variants = templatesByType[send_type] ?? []
+      // Prefer the variant the client already previewed; fall back to a
+      // random pick from the pool if none was passed (or it's stale).
+      const template =
+        (template_id && templatesById[template_id]) ||
+        variants[Math.floor(Math.random() * variants.length)]
       if (!template) {
         results.failed++
         results.errors.push(`No template for ${send_type}`)
@@ -78,6 +91,7 @@ export async function POST(req: NextRequest) {
         await sb.from('email_log').insert({
           prospect_id: prospect.id,
           template_type: send_type,
+          variant: template.variant,
           subject,
           body_html: html,
           resend_id: resendId,
@@ -106,6 +120,7 @@ export async function POST(req: NextRequest) {
         await sb.from('email_log').insert({
           prospect_id: prospect.id,
           template_type: send_type,
+          variant: template.variant,
           subject: renderTemplate(template.subject, prospect, ''),
           body_html: '',
           status: 'failed',

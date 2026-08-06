@@ -38,7 +38,9 @@ interface PreviewItem {
 
 export default function SendPage() {
   const [queue, setQueue] = useState<QueueItem[]>([])
-  const [templates, setTemplates] = useState<Record<string, Template>>({})
+  // The one variant picked per queue item -- picked once when the queue loads
+  // so the preview shown to Max matches exactly what /api/send will send.
+  const [pickedTemplates, setPickedTemplates] = useState<Record<number, Template>>({})
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
@@ -61,9 +63,21 @@ export default function SendPage() {
       const items: QueueItem[] = qData.queue ?? []
       setQueue(items)
       setSelected(new Set(items.map((_, i) => i)))
-      const map: Record<string, Template> = {}
-      for (const t of tData.templates ?? []) map[t.type] = t
-      setTemplates(map)
+
+      const pool: Record<string, Template[]> = {}
+      for (const t of (tData.templates ?? []) as Template[]) {
+        (pool[t.type] ??= []).push(t)
+      }
+
+      // Pick one variant per item now, so it stays stable through preview + send.
+      const picks: Record<number, Template> = {}
+      items.forEach((item, i) => {
+        const variants = pool[item.send_type] ?? []
+        if (variants.length > 0) {
+          picks[i] = variants[Math.floor(Math.random() * variants.length)]
+        }
+      })
+      setPickedTemplates(picks)
     } catch {
       setError('Failed to load queue')
     } finally {
@@ -72,7 +86,7 @@ export default function SendPage() {
   }
 
   function openPreview(item: QueueItem, index: number) {
-    const template = templates[item.send_type]
+    const template = pickedTemplates[index]
     if (!template) return
     const unsubUrl = `${window.location.origin}/api/unsubscribe?id=${item.prospect.id}`
     setPreview({
@@ -105,7 +119,10 @@ export default function SendPage() {
     setSending(true)
     setResult(null)
     setError('')
-    const toSend = queue.filter((_, i) => selected.has(i))
+    const toSend = queue
+      .map((item, i) => ({ item, i }))
+      .filter(({ i }) => selected.has(i))
+      .map(({ item, i }) => ({ ...item, template_id: pickedTemplates[i]?.id }))
     try {
       const res = await fetch('/api/send', {
         method: 'POST',
@@ -199,7 +216,7 @@ export default function SendPage() {
             </div>
             <div className="divide-y divide-gray-50">
               {queue.map((item, i) => {
-                const template = templates[item.send_type]
+                const template = pickedTemplates[i]
                 const unsubUrl = `http://localhost:3002/api/unsubscribe?id=${item.prospect.id}`
                 const renderedSubject = template ? renderTokens(template.subject, item, unsubUrl) : ''
 
