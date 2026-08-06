@@ -65,7 +65,7 @@ async function getAnalyticsData() {
   todayUtc.setUTCHours(0, 0, 0, 0)
   const todayStr = todayUtc.toISOString()
 
-  const [logsRes, prospectsRes, todayLogsRes] = await Promise.all([
+  const [logsRes, prospectsRes, todayLogsRes, templatesRes] = await Promise.all([
     sb
       .from('email_log')
       .select('template_type, variant, status, opened_at, clicked_at, prospect_id, sent_at')
@@ -80,11 +80,15 @@ async function getAnalyticsData() {
       .select('template_type, variant, status, sent_at')
       .gte('sent_at', todayStr)
       .order('sent_at', { ascending: false }),
+    sb
+      .from('templates')
+      .select('type, variant'),
   ])
 
   const logs = (logsRes.data ?? []) as LogRow[]
   const prospects = (prospectsRes.data ?? []) as ProspectRow[]
   const todayLogs = (todayLogsRes.data ?? []) as Pick<LogRow, 'template_type' | 'status' | 'sent_at'>[]
+  const templatePool = (templatesRes.data ?? []) as { type: string; variant: number }[]
 
   const todayBatch: TodayBatch = {
     sent: todayLogs.filter((l) => l.status === 'sent').length,
@@ -109,8 +113,14 @@ async function getAnalyticsData() {
   const totalUnsubscribed = prospects.filter((p) => p.status === 'unsubscribed').length
   const queued = prospects.filter((p) => p.status === 'queued').length
 
-  // By template + variant
+  // By template + variant -- seed every known (type, variant) pair from the
+  // templates table first so unsent/undrawn variants still show up at zero,
+  // instead of only appearing once a send happens to pick them.
   const byTemplateMap: Record<string, TemplateStats> = {}
+  for (const t of templatePool) {
+    const key = `${t.type}:${t.variant}`
+    byTemplateMap[key] = { type: t.type, variant: t.variant, sent: 0, opens: 0, clicks: 0, bounced: 0 }
+  }
   for (const log of logs) {
     const key = `${log.template_type}:${log.variant ?? '—'}`
     if (!byTemplateMap[key]) {
