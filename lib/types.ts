@@ -39,6 +39,7 @@ export interface EmailLog {
   id: string
   prospect_id: string
   template_type: 'initial' | 'followup1' | 'followup2'
+  variant: number | null
   subject: string
   body_html: string
   resend_id: string | null
@@ -52,6 +53,7 @@ export interface EmailLog {
 export interface Template {
   id: string
   type: 'initial' | 'followup1' | 'followup2'
+  variant: number
   subject: string
   body_html: string
   updated_at: string
