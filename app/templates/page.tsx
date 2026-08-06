@@ -12,6 +12,7 @@ const TOKENS = ['{{business_name}}', '{{contact_name}}', '{{industry}}', '{{city
 
 export default function TemplatesPage() {
   const [templates, setTemplates] = useState<Template[]>([])
+  const [activeType, setActiveType] = useState<string | null>(null)
   const [active, setActive] = useState<Template | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -24,7 +25,10 @@ export default function TemplatesPage() {
     const data = await res.json()
     const list: Template[] = data.templates ?? []
     setTemplates(list)
-    if (list.length > 0) setActive(list[0])
+    if (list.length > 0) {
+      setActiveType(list[0].type)
+      setActive(list[0])
+    }
     setLoading(false)
   }
 
@@ -45,34 +49,56 @@ export default function TemplatesPage() {
 
   if (loading) return <div className="text-center py-16 text-gray-400 text-sm">Loading...</div>
 
+  const types = Array.from(new Set(templates.map(t => t.type)))
+  const variantsForType = templates.filter(t => t.type === activeType).sort((a, b) => a.variant - b.variant)
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-gray-900">Email Templates</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Edit the subject and body for each email type. Tokens are replaced automatically on send.
+          Edit the subject and body for each variant. Tokens are replaced automatically on send. Sends rotate randomly between variants within a stage.
         </p>
       </div>
 
       <div className="flex gap-3">
-        {templates.map(t => (
+        {types.map(type => (
           <button
-            key={t.id}
-            onClick={() => setActive(t)}
+            key={type}
+            onClick={() => {
+              setActiveType(type)
+              const first = templates.filter(t => t.type === type).sort((a, b) => a.variant - b.variant)[0]
+              if (first) setActive(first)
+            }}
             className={`text-sm px-4 py-2 rounded-lg border transition-colors ${
-              active?.id === t.id
+              activeType === type
                 ? 'bg-blue-600 text-white border-blue-600'
                 : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
             }`}
           >
-            {TYPE_LABEL[t.type] ?? t.type}
+            {TYPE_LABEL[type] ?? type}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        {variantsForType.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActive(t)}
+            className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
+              active?.id === t.id
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            Variant {t.variant}
           </button>
         ))}
       </div>
 
       {active && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Editor */}
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
               <div>
@@ -123,11 +149,9 @@ export default function TemplatesPage() {
             </div>
           </div>
 
-          {/* Preview */}
           <div className="space-y-2">
             <p className="text-sm font-medium text-gray-700">Preview</p>
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              {/* Email header strip */}
               <div className="bg-gray-50 border-b border-gray-100 px-5 py-4 space-y-1.5 text-sm">
                 <div className="flex gap-2">
                   <span className="text-gray-400 w-14 shrink-0">From:</span>
@@ -138,7 +162,6 @@ export default function TemplatesPage() {
                   <span className="font-medium text-gray-900">{active.subject}</span>
                 </div>
               </div>
-              {/* Body — no Tailwind prose, let inline styles render faithfully */}
               <div
                 className="px-6 py-5"
                 dangerouslySetInnerHTML={{ __html: active.body_html }}
