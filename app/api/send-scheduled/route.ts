@@ -92,16 +92,18 @@ export async function GET(req: NextRequest) {
   const { data: templates, error: tErr } = await sb.from('templates').select('*')
   if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 })
 
-  const templateMap = Object.fromEntries(
-    templates.map((t: { type: string; subject: string; body_html: string }) => [t.type, t])
-  )
+  const templatesByType: Record<string, typeof templates> = {}
+  for (const t of templates) {
+    (templatesByType[t.type] ??= []).push(t)
+  }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin
   const results = { sent: 0, failed: 0, errors: [] as string[] }
 
   for (const { prospect, send_type } of queue) {
-    const template = templateMap[send_type]
-    if (!template) { results.failed++; continue }
+    const variants = templatesByType[send_type] ?? []
+    if (variants.length === 0) { results.failed++; continue }
+    const template = variants[Math.floor(Math.random() * variants.length)]
 
     const unsubUrl = `${appUrl}/api/unsubscribe?id=${prospect.id}`
     const subject = renderTemplate(template.subject, prospect, unsubUrl)
@@ -117,14 +119,14 @@ export async function GET(req: NextRequest) {
       }
       const { status, field } = statusMap[send_type]
       await Promise.all([
-        sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, subject, body_html: html, resend_id: resendId, status: 'sent' }),
+        sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, variant: template.variant, subject, body_html: html, resend_id: resendId, status: 'sent' }),
         sb.from('prospects').update({ status, [field]: now }).eq('id', prospect.id),
       ])
       results.sent++
     } catch (err) {
       results.failed++
       results.errors.push(`${prospect.email}: ${err instanceof Error ? err.message : 'Unknown'}`)
-      await sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, subject: renderTemplate(template.subject, prospect, ''), body_html: '', status: 'failed' })
+      await sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, variant: template.variant, subject: renderTemplate(template.subject, prospect, ''), body_html: '', status: 'failed' })
     }
 
     await new Promise(r => setTimeout(r, 200))
