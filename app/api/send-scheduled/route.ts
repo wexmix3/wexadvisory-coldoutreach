@@ -15,7 +15,8 @@ function isAuthorized(req: NextRequest): boolean {
 const MAX_INITIAL_PER_BATCH = Number(process.env.MAX_INITIAL_PER_BATCH ?? 10)
 const MIN_FIT_SCORE = Number(process.env.MIN_FIT_SCORE ?? 50)
 const MAX_FOLLOWUP_PER_BATCH = Number(process.env.MAX_FOLLOWUP_PER_BATCH ?? 10)
-const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
+const FROM_NAME = 'Max Wexley'
+const FROM_EMAIL = 'max@send.wexadvisory.com'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 const FOLLOWUP1_DAYS = 5
 const FOLLOWUP2_DAYS = 7
@@ -50,17 +51,17 @@ async function buildQueue(): Promise<QueueItem[]> {
 }
 
 async function sendEmail(to: string, subject: string, html: string, unsubUrl: string): Promise<string | null> {
-  const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey || apiKey.startsWith('re_your')) throw new Error('RESEND_API_KEY not configured')
-  const res = await fetch('https://api.resend.com/emails', {
+  const apiKey = process.env.BREVO_API_KEY
+  if (!apiKey) throw new Error('BREVO_API_KEY not configured')
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      from: FROM,
-      to,
-      reply_to: REPLY_TO,
+      sender: { name: FROM_NAME, email: FROM_EMAIL },
+      to: [{ email: to }],
+      replyTo: { email: REPLY_TO },
       subject,
-      html,
+      htmlContent: html,
       headers: {
         'List-Unsubscribe': `<${unsubUrl}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -68,8 +69,8 @@ async function sendEmail(to: string, subject: string, html: string, unsubUrl: st
     }),
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data.message ?? 'Resend error')
-  return data.id ?? null
+  if (!res.ok) throw new Error(data.message ?? 'Brevo error')
+  return data.messageId ?? null
 }
 
 const RESUME_DATE = new Date('2026-07-22T00:00:00Z')
@@ -110,7 +111,7 @@ export async function GET(req: NextRequest) {
     const html = renderTemplate(template.body_html, prospect, unsubUrl)
 
     try {
-      const resendId = await sendEmail(prospect.email, subject, html, unsubUrl)
+      const messageId = await sendEmail(prospect.email, subject, html, unsubUrl)
       const now = new Date().toISOString()
       const statusMap: Record<string, { status: string; field: string }> = {
         initial: { status: 'initial_sent', field: 'initial_sent_at' },
@@ -119,7 +120,7 @@ export async function GET(req: NextRequest) {
       }
       const { status, field } = statusMap[send_type]
       await Promise.all([
-        sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, variant: template.variant, subject, body_html: html, resend_id: resendId, status: 'sent' }),
+        sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, variant: template.variant, subject, body_html: html, resend_id: messageId, status: 'sent' }),
         sb.from('prospects').update({ status, [field]: now }).eq('id', prospect.id),
       ])
       results.sent++

@@ -32,6 +32,8 @@ type LogRow = {
   status: string
   opened_at: string | null
   clicked_at: string | null
+  delivered_at: string | null
+  complained_at: string | null
   prospect_id: string
   sent_at: string
 }
@@ -68,7 +70,7 @@ async function getAnalyticsData() {
   const [logsRes, prospectsRes, todayLogsRes, templatesRes] = await Promise.all([
     sb
       .from('email_log')
-      .select('template_type, variant, status, opened_at, clicked_at, prospect_id, sent_at')
+      .select('template_type, variant, status, opened_at, clicked_at, delivered_at, complained_at, prospect_id, sent_at')
       .order('sent_at', { ascending: false })
       .limit(5000),
     sb
@@ -106,9 +108,11 @@ async function getAnalyticsData() {
 
   // Funnel totals
   const totalSent = logs.filter((l) => l.status === 'sent').length
+  const totalDelivered = logs.filter((l) => l.delivered_at).length
   const totalOpened = logs.filter((l) => l.opened_at).length
   const totalClicked = logs.filter((l) => l.clicked_at).length
   const totalBounced = logs.filter((l) => l.status === 'bounced').length
+  const totalComplained = logs.filter((l) => l.complained_at).length
   const totalReplied = prospects.filter((p) => p.status === 'replied').length
   const totalUnsubscribed = prospects.filter((p) => p.status === 'unsubscribed').length
   const queued = prospects.filter((p) => p.status === 'queued').length
@@ -190,14 +194,20 @@ async function getAnalyticsData() {
 
   return {
     totalSent,
+    totalDelivered,
     totalOpened,
     totalClicked,
     totalBounced,
+    totalComplained,
     totalReplied,
     totalUnsubscribed,
     queued,
+    deliveryRate: pct(totalDelivered, totalSent),
     openRate: pct(totalOpened, totalSent),
     replyRate: pct(totalReplied, totalSent),
+    bounceRate: pct(totalBounced, totalSent),
+    unsubscribeRate: pct(totalUnsubscribed, totalSent),
+    complaintRate: pct(totalComplained, totalSent),
     byTemplate,
     byIndustry,
     avgDaysToReply,
@@ -277,14 +287,20 @@ const TH_STYLE: React.CSSProperties = {
 export default async function AnalyticsPage() {
   const {
     totalSent,
+    totalDelivered,
     totalOpened,
     totalClicked,
     totalBounced,
+    totalComplained,
     totalReplied,
     totalUnsubscribed,
     queued,
+    deliveryRate,
     openRate,
     replyRate,
+    bounceRate,
+    unsubscribeRate,
+    complaintRate,
     byTemplate,
     byIndustry,
     avgDaysToReply,
@@ -295,10 +311,13 @@ export default async function AnalyticsPage() {
 
   const funnelRows = [
     { label: 'Sent', count: totalSent, color: '#3b82f6' },
+    { label: 'Delivered', count: totalDelivered, color: '#0ea5e9' },
     { label: 'Opened', count: totalOpened, color: '#8b5cf6' },
     { label: 'Clicked', count: totalClicked, color: '#f59e0b' },
     { label: 'Replied', count: totalReplied, color: '#22c55e' },
     { label: 'Bounced', count: totalBounced, color: '#ef4444' },
+    { label: 'Unsubscribed', count: totalUnsubscribed, color: '#94a3b8' },
+    { label: 'Spam Complaints', count: totalComplained, color: '#dc2626' },
   ]
 
   return (
@@ -385,8 +404,12 @@ export default async function AnalyticsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
         {[
           { label: 'Total Sent', value: totalSent, sub: 'across 3 templates', color: '#3b82f6' },
+          { label: 'Delivery Rate', value: deliveryRate, sub: `${totalDelivered} of ${totalSent} delivered`, color: '#0ea5e9' },
           { label: 'Open Rate', value: openRate, sub: `${totalOpened} of ${totalSent} opened`, color: '#8b5cf6' },
           { label: 'Reply Rate', value: replyRate, sub: `${totalReplied} replies total`, color: '#22c55e' },
+          { label: 'Bounce Rate', value: bounceRate, sub: `${totalBounced} bounced`, color: '#ef4444' },
+          { label: 'Unsubscribe Rate', value: unsubscribeRate, sub: `${totalUnsubscribed} unsubscribed`, color: '#94a3b8' },
+          { label: 'Spam Rate', value: complaintRate, sub: `${totalComplained} complaints`, color: '#dc2626' },
           { label: 'Queued', value: queued, sub: 'ready to send', color: '#f59e0b' },
         ].map((card) => (
           <div
