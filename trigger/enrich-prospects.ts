@@ -27,14 +27,20 @@ function extractJson(raw: string): EnrichmentResult {
   return JSON.parse(match[0]) as EnrichmentResult
 }
 
-async function callClaude(client: Anthropic, prompt: string): Promise<EnrichmentResult | null> {
+async function callClaude(client: Anthropic, systemPrompt: string, userPrompt: string): Promise<EnrichmentResult | null> {
   const MAX_RETRIES = 3
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 200,
-        messages: [{ role: "user", content: prompt }],
+        // Instructions are identical across every prospect in a batch — cached
+        // as a system block so only the first call in a run (within the 5-min
+        // TTL) pays full input price for it; the rest read it back at 0.1x.
+        // Per-prospect specifics stay in the user message, which is what
+        // actually varies call to call.
+        system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: userPrompt }],
       })
       const raw = (message.content[0] as { type: string; text: string }).text.trim()
       const parsed = extractJson(raw)
@@ -106,10 +112,8 @@ async function enrichProspect(
     ? `Website context:\n${siteContext}`
     : `Website: ${prospect.website ?? "not available"} (could not be scraped — base your response on industry knowledge)`
 
-  const prompt = `You are analyzing a small business to personalize a cold email about AI automation services.
-
-Business: ${prospect.business_name} | Industry: ${prospect.industry ?? "unknown"} | Location: ${location || "unknown"}
-${websiteSection}
+  // Static across every prospect in a batch — this is the cached system block.
+  const systemPrompt = `You are analyzing a small business to personalize a cold email about AI automation services.
 
 Reply with valid JSON only — no prose, no markdown:
 {
@@ -129,7 +133,11 @@ fit_score guidelines:
 
 custom_intro must feel human and specific. Bad: "Most businesses waste hours on manual tasks." Good: "I noticed Peak Pilates still handles class waitlists and member check-ins via email — that's typically 4-6 hours a week most studios reclaim with simple automation."`
 
-  return callClaude(client, prompt)
+  // Only the per-prospect specifics — everything that actually varies call to call.
+  const userPrompt = `Business: ${prospect.business_name} | Industry: ${prospect.industry ?? "unknown"} | Location: ${location || "unknown"}
+${websiteSection}`
+
+  return callClaude(client, systemPrompt, userPrompt)
 }
 
 export const enrichProspectsTask = task({
