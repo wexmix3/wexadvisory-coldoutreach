@@ -26,3 +26,8 @@ The cached block is roughly 230 words (~300-400 tokens). At Haiku pricing, cache
 
 ## Commit
 Not yet committed — see final session report for the commit/tag once all repos in this audit are done, or find it in the next `git log` if this worksheet is read after that point.
+
+## CORRECTION (2026-08-18, later same day)
+Live-tested this fix per Max's request: ran the exact system/user structure twice back-to-back with different "prospects." Result: `cache_creation_input_tokens: 0` on **both** calls — the cache never wrote, let alone read. Root cause: the static system block is ~400 tokens, well under Haiku's minimum cacheable prefix length (2048 tokens per Anthropic's documented minimums; Sonnet/Opus is 1024). The `cache_control` marker is silently accepted by the API but has no effect below that threshold — no error, no warning, just a quiet no-op.
+
+**Correct status: this fix produces zero measurable cost savings today.** The code change is harmless (identical output, identical cost either way) and leaves the prompt correctly structured if the block ever grows past 2048 tokens in the future (e.g. if scraped website context moves into the system block) — but it should not be reported or treated as an active cost win. Flagging this clearly since the original worksheet above claimed a real (if modest) savings estimate that does not hold up under live verification.
