@@ -7,6 +7,32 @@ import { triggerMapsScraperFallback } from '@/lib/maps-scraper-fallback'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+// Hard ceiling on paid-lookup spend (Google Places + Hunter.io) per calendar
+// month. Each cron run costs ~1 Places search + up to ~20 Hunter domain-search
+// lookups. 300 prospects/month keeps discovery well under the $25/mo overall
+// automation ceiling even before Hunter's own account quota kicks in — this
+// guards against a future scheduling change (e.g. hourly instead of daily)
+// silently multiplying spend with no one noticing until the Hunter bill lands.
+const MAX_MONTHLY_DISCOVERY_ADDS = 300
+
+async function monthlyDiscoveryAddsExceeded(sb: ReturnType<typeof getSupabaseAdmin>): Promise<boolean> {
+  const monthStart = new Date()
+  monthStart.setUTCDate(1)
+  monthStart.setUTCHours(0, 0, 0, 0)
+
+  const { count, error } = await sb
+    .from('prospects')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', monthStart.toISOString())
+  if (error) {
+    // Fail open on a query error — an unenforceable cap must not take down
+    // discovery entirely, same posture as the quota-exceeded fallback below.
+    console.error('auto-discover: monthly cap check failed:', error.message)
+    return false
+  }
+  return (count ?? 0) >= MAX_MONTHLY_DISCOVERY_ADDS
+}
+
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   if (!secret) return true
@@ -26,6 +52,14 @@ function pickCategory(): string {
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const sbCap = getSupabaseAdmin()
+  if (await monthlyDiscoveryAddsExceeded(sbCap)) {
+    return NextResponse.json({
+      skipped: true,
+      reason: `Monthly discovery cap reached (${MAX_MONTHLY_DISCOVERY_ADDS} prospects added this calendar month) — pausing paid lookups until next month.`,
+    })
   }
 
   const city = pick(US_CITIES)
