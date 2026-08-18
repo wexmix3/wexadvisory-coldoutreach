@@ -131,7 +131,11 @@ fit_score guidelines:
 - If a careers/jobs page was found with open roles, raise score by 10-15 points (active hiring = budget available)
 - If the about page mentions a small team or founder-run business, raise score — these are the ideal buyers
 
-custom_intro must feel human and specific. Bad: "Most businesses waste hours on manual tasks." Good: "I noticed Peak Pilates still handles class waitlists and member check-ins via email — that's typically 4-6 hours a week most studios reclaim with simple automation."`
+custom_intro must feel human and specific, and must NOT start with "I noticed" — vary the opening every time. Bad (generic): "Most businesses waste hours on manual tasks." Bad (formulaic, do not imitate this opener): "I noticed Peak Pilates still handles class waitlists manually." Good examples — study the variety of openings, don't default to any single pattern:
+- "Peak Pilates likely handles class waitlists and member check-ins over email — most studios that size reclaim 4-6 hours a week automating that."
+- "Running a multi-location dental practice usually means someone's manually chasing insurance verifications between offices."
+- "Law firms this size typically still route intake calls to a human before anything hits the calendar."
+- "Between managing listings and client follow-up, real estate teams like this rarely have time left to automate the repetitive parts."`
 
   // Only the per-prospect specifics — everything that actually varies call to call.
   const userPrompt = `Business: ${prospect.business_name} | Industry: ${prospect.industry ?? "unknown"} | Location: ${location || "unknown"}
