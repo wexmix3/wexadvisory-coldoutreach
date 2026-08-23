@@ -7,8 +7,8 @@ import { Template } from '@/lib/types'
 export const dynamic = 'force-dynamic'
 
 const MAX_PER_BATCH = Number(process.env.MAX_DAILY_SENDS ?? 10)
-const FROM = 'Max Wexley <maxwexley@wexadvisory.com>'
-const REPLY_TO = 'maxwexley@wexadvisory.com'
+const FROM = 'Max Wexley <max@wexadvisory.com>'
+const REPLY_TO = 'max@wexadvisory.com'
 
 // Client may pick a specific variant (so the preview it showed matches what
 // actually sends). If omitted, fall back to a random pick from the pool.

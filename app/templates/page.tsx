@@ -155,7 +155,7 @@ export default function TemplatesPage() {
               <div className="bg-gray-50 border-b border-gray-100 px-5 py-4 space-y-1.5 text-sm">
                 <div className="flex gap-2">
                   <span className="text-gray-400 w-14 shrink-0">From:</span>
-                  <span className="text-gray-700">Max Wexley &lt;maxwexley@wexadvisory.com&gt;</span>
+                  <span className="text-gray-700">Max Wexley &lt;max@wexadvisory.com&gt;</span>
                 </div>
                 <div className="flex gap-2">
                   <span className="text-gray-400 w-14 shrink-0">Subject:</span>

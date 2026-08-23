@@ -292,7 +292,7 @@ export default function SendPage() {
               </button>
             </div>
             <div className="px-6 py-4 border-b border-gray-50 bg-gray-50 space-y-1 text-sm">
-              <div><span className="text-gray-400 w-16 inline-block">From:</span> <span className="text-gray-700">Max Wexley &lt;maxwexley@wexadvisory.com&gt;</span></div>
+              <div><span className="text-gray-400 w-16 inline-block">From:</span> <span className="text-gray-700">Max Wexley &lt;max@wexadvisory.com&gt;</span></div>
               <div><span className="text-gray-400 w-16 inline-block">To:</span> <span className="text-gray-700">{preview.item.prospect.email}</span></div>
               <div><span className="text-gray-400 w-16 inline-block">Subject:</span> <span className="font-medium text-gray-900">{preview.subject}</span></div>
               <div><span className="text-gray-400 w-16 inline-block">Type:</span>
@@ -330,7 +330,7 @@ export default function SendPage() {
               <h2 className="text-lg font-semibold text-gray-900">Confirm send</h2>
               <p className="text-gray-500 text-sm mt-1">
                 You&apos;re about to send <strong>{selected.size} email{selected.size !== 1 ? 's' : ''}</strong> from{' '}
-                <strong>maxwexley@wexadvisory.com</strong>. This cannot be undone.
+                <strong>max@wexadvisory.com</strong>. This cannot be undone.
               </p>
             </div>
             <div className="bg-gray-50 rounded-xl p-4 space-y-1 text-sm text-gray-600">
