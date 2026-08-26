@@ -48,6 +48,13 @@ jobs:
             -email \
             -exit-on-inactivity 90s || true
 
+      - name: Debug -- inspect raw scraper output
+        run: |
+          echo "--- out/ contents ---"
+          ls -la out/ || true
+          echo "--- first 3000 chars of results.json ---"
+          head -c 3000 out/results.json || true
+
       - name: Upsert results to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
