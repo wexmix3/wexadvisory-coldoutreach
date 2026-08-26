@@ -48,15 +48,6 @@ jobs:
             -email \
             -exit-on-inactivity 90s || true
 
-      - name: Debug -- inspect raw scraper output
-        run: |
-          echo "--- record count ---"
-          wc -l out/results.json || true
-          echo "--- does 'email' appear anywhere in the file? ---"
-          grep -io '"[a-z_]*email[a-z_]*"[^,}]*' out/results.json | sort -u | head -30 || echo "no email-ish key found"
-          echo "--- one full record for inspection ---"
-          head -1 out/results.json || true
-
       - name: Upsert results to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

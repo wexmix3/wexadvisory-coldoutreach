@@ -41,15 +41,19 @@ if (raw.length) {
   }
 }
 
+// gosom's JSON field is `web_site`, not `website` -- confirmed 2026-08-26 via a
+// real run's raw output (undocumented; the original build guessed `website` and
+// it silently zeroed out every row since the driver/hang bugs meant this line
+// had never run against real data until now).
 const rows = places
-  .filter(p => p.website && Array.isArray(p.emails) && p.emails.length > 0)
+  .filter(p => p.web_site && Array.isArray(p.emails) && p.emails.length > 0)
   .map(p => {
     const address = p.address ?? ''
     return {
       business_name: p.title ?? 'Unknown',
       contact_name: null,
       email: p.emails[0].toLowerCase(),
-      website: p.website,
+      website: p.web_site,
       industry: FALLBACK_CATEGORY,
       city: parseCity(address) || FALLBACK_CITY,
       state: parseState(address),
