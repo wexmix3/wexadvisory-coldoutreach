@@ -50,10 +50,12 @@ jobs:
 
       - name: Debug -- inspect raw scraper output
         run: |
-          echo "--- out/ contents ---"
-          ls -la out/ || true
-          echo "--- first 3000 chars of results.json ---"
-          head -c 3000 out/results.json || true
+          echo "--- record count ---"
+          wc -l out/results.json || true
+          echo "--- does 'email' appear anywhere in the file? ---"
+          grep -io '"[a-z_]*email[a-z_]*"[^,}]*' out/results.json | sort -u | head -30 || echo "no email-ish key found"
+          echo "--- one full record for inspection ---"
+          head -1 out/results.json || true
 
       - name: Upsert results to Supabase
         env:
