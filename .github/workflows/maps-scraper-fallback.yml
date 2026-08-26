@@ -48,6 +48,19 @@ jobs:
             -email \
             -exit-on-inactivity 90s || true
 
+      - name: Debug -- addresses for records with emails
+        run: |
+          node -e '
+            const fs = require("fs");
+            const lines = fs.readFileSync("out/results.json", "utf-8").trim().split("\n");
+            for (const line of lines) {
+              const p = JSON.parse(line);
+              if (p.emails && p.emails.length) {
+                console.log(JSON.stringify({ title: p.title, address: p.address, emails: p.emails }));
+              }
+            }
+          '
+
       - name: Upsert results to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
