@@ -23,9 +23,15 @@ function parseState(address) {
   return address.match(/,\s*([A-Z]{2})\s+\d{5}/)?.[1] ?? ''
 }
 
+// City is whatever segment sits right before the one matching "STATE ZIP" --
+// anchored on that pattern instead of a fixed index because address shape
+// varies by source (lib/discovery.ts has the same fix + full rationale: this
+// repo's Places path trails with ", USA", gosom's doesn't -- a fixed offset
+// was correct for one shape and silently wrong for the other).
 function parseCity(address) {
-  const parts = address.split(',')
-  return parts.length >= 3 ? parts[parts.length - 3]?.trim() ?? '' : ''
+  const parts = address.split(',').map(p => p.trim())
+  const stateZipIndex = parts.findIndex(p => /^[A-Z]{2}\s+\d{5}/.test(p))
+  return stateZipIndex > 0 ? parts[stateZipIndex - 1] : ''
 }
 
 // Output format (single JSON array vs newline-delimited JSON) isn't documented --

@@ -85,9 +85,17 @@ export function parseState(address: string): string {
   return address.match(/,\s*([A-Z]{2})\s+\d{5}/)?.[1] ?? ''
 }
 
+// City is whatever segment sits right before the one matching "STATE ZIP" --
+// anchored on that pattern instead of a fixed index because address shape
+// varies by source: Google Places' formattedAddress trails with ", USA" (4
+// segments), gosom's does not (3 segments). A fixed parts.length-N offset
+// (previously length-3, confirmed correct only for Places' 4-segment shape)
+// silently breaks the moment either source's segment count changes -- this
+// doesn't care how many segments come before or after.
 export function parseCity(address: string): string {
-  const parts = address.split(',')
-  return parts.length >= 3 ? parts[parts.length - 3]?.trim() ?? '' : ''
+  const parts = address.split(',').map(p => p.trim())
+  const stateZipIndex = parts.findIndex(p => /^[A-Z]{2}\s+\d{5}/.test(p))
+  return stateZipIndex > 0 ? parts[stateZipIndex - 1] : ''
 }
 
 function extractEmailsFromHtml(html: string): string[] {
