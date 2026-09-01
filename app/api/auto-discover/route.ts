@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { discoverProspects, PlacesQuotaExceededError } from '@/lib/discovery'
-import { US_CITIES, PROSPECT_CATEGORIES, TOP_CATEGORIES } from '@/lib/constants'
+import { US_CITIES, PROSPECT_CATEGORIES, TOP_CATEGORIES, CATEGORY_WEIGHTS } from '@/lib/constants'
 import { triggerMapsScraperFallback } from '@/lib/maps-scraper-fallback'
 
 export const dynamic = 'force-dynamic'
@@ -43,10 +43,22 @@ function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]!
 }
 
+// Weighted pick — proven-click categories (CATEGORY_WEIGHTS) come up more often,
+// but every category in the pool can still be picked. Nothing is ever excluded.
+function pickWeighted(pool: string[], weights: Record<string, number>): string {
+  const total = pool.reduce((sum, c) => sum + (weights[c] ?? 1), 0)
+  let r = Math.random() * total
+  for (const c of pool) {
+    r -= weights[c] ?? 1
+    if (r <= 0) return c
+  }
+  return pool[pool.length - 1]!
+}
+
 function pickCategory(): string {
   const useTop = Math.random() < 0.7
-  const pool = useTop ? TOP_CATEGORIES : PROSPECT_CATEGORIES
-  return pool[Math.floor(Math.random() * pool.length)]!
+  if (useTop) return pickWeighted(TOP_CATEGORIES, CATEGORY_WEIGHTS)
+  return pick(PROSPECT_CATEGORIES)
 }
 
 export async function GET(req: NextRequest) {

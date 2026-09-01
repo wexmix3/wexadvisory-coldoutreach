@@ -22,4 +22,5 @@ export function renderTemplate(
     .replace(/\{\{industry_hook\}\}/g, getIndustryHook(prospect.industry))
     .replace(/\{\{calendly_url\}\}/g, CALENDLY_URL)
     .replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl)
+    .replace(/\{\{prospect_id\}\}/g, prospect.id)
 }
