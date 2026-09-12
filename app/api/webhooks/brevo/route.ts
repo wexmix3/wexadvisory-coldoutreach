@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
-type BrevoEvent = { event: string; ['message-id']?: string }
+type BrevoEvent = { event: string; ['message-id']?: string; link?: string }
 
 async function logFailure(sb: ReturnType<typeof getSupabaseAdmin>, event: BrevoEvent | undefined, reason: string) {
   await sb.from('webhook_failures').insert({
@@ -65,7 +65,13 @@ export async function POST(req: NextRequest) {
         result = await sb.from('email_log').update({ opened_at: now }).eq('id', logRow.id).is('opened_at', null)
         break
       case 'click':
-        result = await sb.from('email_log').update({ clicked_at: now }).eq('id', logRow.id).is('clicked_at', null)
+        // Brevo click-tracks every link in the body, including the footer unsubscribe
+        // link -- that's handled by /api/unsubscribe and shouldn't count as CTA engagement.
+        if (event.link?.includes('/api/unsubscribe')) {
+          result = { error: null }
+        } else {
+          result = await sb.from('email_log').update({ clicked_at: now }).eq('id', logRow.id).is('clicked_at', null)
+        }
         break
       default:
         result = { error: null }

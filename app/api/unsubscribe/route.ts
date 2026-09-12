@@ -7,7 +7,7 @@ async function markUnsubscribed(id: string) {
   const sb = getSupabaseAdmin()
   return sb
     .from('prospects')
-    .update({ status: 'unsubscribed' })
+    .update({ status: 'unsubscribed', unsubscribed_at: new Date().toISOString() })
     .eq('id', id)
     .neq('status', 'unsubscribed')
 }
