@@ -27,6 +27,25 @@ function extractJson(raw: string): EnrichmentResult {
   return JSON.parse(match[0]) as EnrichmentResult
 }
 
+// Code-based quality gate on Claude's enrichment output -- no extra API call,
+// runs in <1ms, same pattern as ai-audit's checkAuditQuality. Nothing here
+// checked custom_intro/pain_signal for correctness before this; the prompt's
+// own "don't start with 'I noticed'" rule was never enforced, only prompted.
+// Also catches the "perfect email, wrong customer" failure mode -- a
+// plausible-sounding intro that doesn't actually reference this business.
+function checkEnrichmentQuality(result: EnrichmentResult, businessName: string): string | null {
+  if (result.custom_intro.length < 20) return "custom_intro too short/empty"
+  if (/^i noticed\b/i.test(result.custom_intro.trim())) return "custom_intro uses banned 'I noticed' opener"
+  if (result.pain_signal.length < 8) return "pain_signal too short/empty"
+
+  const nameWords = businessName.toLowerCase().split(/\s+/).filter((w) => w.length >= 4)
+  const intro = result.custom_intro.toLowerCase()
+  const mentionsBusiness = nameWords.length === 0 || nameWords.some((w) => intro.includes(w))
+  if (!mentionsBusiness) return `custom_intro doesn't reference "${businessName}"`
+
+  return null
+}
+
 async function callClaude(client: Anthropic, systemPrompt: string, userPrompt: string): Promise<EnrichmentResult | null> {
   const MAX_RETRIES = 3
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -141,7 +160,16 @@ custom_intro must feel human and specific, and must NOT start with "I noticed" â
   const userPrompt = `Business: ${prospect.business_name} | Industry: ${prospect.industry ?? "unknown"} | Location: ${location || "unknown"}
 ${websiteSection}`
 
-  return callClaude(client, systemPrompt, userPrompt)
+  const result = await callClaude(client, systemPrompt, userPrompt)
+  if (!result) return null
+
+  const qualityIssue = checkEnrichmentQuality(result, prospect.business_name)
+  if (qualityIssue) {
+    console.warn(`[enrich-prospects] quality gate failed for ${prospect.id} (${prospect.business_name}): ${qualityIssue}`)
+    return null
+  }
+
+  return result
 }
 
 export const enrichProspectsTask = task({
