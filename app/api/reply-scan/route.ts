@@ -13,7 +13,10 @@ export const maxDuration = 60
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const IN_SEQUENCE = ['initial_sent', 'followup1_sent', 'followup2_sent']
-const AUTO_REPLY = /automatic reply|auto-?reply|out of (the )?office|undeliverable|delivery status/i
+// Max's own addresses sit in prospects as test rows; his X-link forwards were being
+// counted as "replies" (first live run 2026-09-18).
+const OWN_ADDRESS = /@wexadvisory\.com$|^maxmwexley@gmail\.com$/i
+const AUTO_REPLY =/automatic reply|auto-?reply|out of (the )?office|undeliverable|delivery status/i
 
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
@@ -56,7 +59,7 @@ export async function GET(req: NextRequest) {
     const subject = headers.find((h) => h.name.toLowerCase() === 'subject')?.value ?? ''
     const addr = (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase()
     const prospectId = byEmail.get(addr)
-    if (!prospectId) continue
+    if (!prospectId || OWN_ADDRESS.test(addr)) continue
     if (AUTO_REPLY.test(subject)) { skippedAuto++; continue }
 
     const { error: upErr } = await sb
