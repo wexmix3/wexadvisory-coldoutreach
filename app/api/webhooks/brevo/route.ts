@@ -3,7 +3,9 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
-type BrevoEvent = { event: string; ['message-id']?: string; link?: string }
+const SCANNER_WINDOW_MS = 5 * 60 * 1000
+
+type BrevoEvent ={ event: string; ['message-id']?: string; link?: string }
 
 async function logFailure(sb: ReturnType<typeof getSupabaseAdmin>, event: BrevoEvent | undefined, reason: string) {
   await sb.from('webhook_failures').insert({
@@ -27,7 +29,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    const { data: logRow, error: lookupError } = await sb.from('email_log').select('id, prospect_id').eq('resend_id', messageId).maybeSingle()
+    const { data: logRow, error: lookupError } = await sb.from('email_log').select('id, prospect_id, sent_at').eq('resend_id', messageId).maybeSingle()
     if (lookupError) {
       await logFailure(sb, event, `Lookup error: ${lookupError.message}`)
       return NextResponse.json({ ok: true })
@@ -64,15 +66,24 @@ export async function POST(req: NextRequest) {
       case 'opened':
         result = await sb.from('email_log').update({ opened_at: now }).eq('id', logRow.id).is('opened_at', null)
         break
-      case 'click':
-        // Brevo click-tracks every link in the body, including the footer unsubscribe
-        // link -- that's handled by /api/unsubscribe and shouldn't count as CTA engagement.
-        if (event.link?.includes('/api/unsubscribe')) {
-          result = { error: null }
+      case 'click': {
+        // Link scanners (Microsoft Defender Safe Links, AWS-hosted gateways) hit every link
+        // in the body within a few minutes of delivery. Verified 2026-09-18 against Brevo's
+        // per-message event log: all 7 clicks from 09-14..09-18 were scanner bursts, 0
+        // human. A click inside SCANNER_WINDOW_MS of send, or any hit on the unsubscribe
+        // link (humans land on a confirm page, it's never CTA engagement), is recorded as
+        // scanner_click_at instead of clicked_at. A human click inside the window is lost;
+        // that's the accepted trade for a click metric that means something.
+        const sentMs = logRow.sent_at ? new Date(logRow.sent_at).getTime() : 0
+        const isScanner =
+          event.link?.includes('/api/unsubscribe') || Date.now() - sentMs < SCANNER_WINDOW_MS
+        if (isScanner) {
+          result = await sb.from('email_log').update({ scanner_click_at: now }).eq('id', logRow.id).is('scanner_click_at', null)
         } else {
           result = await sb.from('email_log').update({ clicked_at: now }).eq('id', logRow.id).is('clicked_at', null)
         }
         break
+      }
       default:
         result = { error: null }
     }

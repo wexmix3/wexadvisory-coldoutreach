@@ -14,7 +14,7 @@ export const PROSPECT_CATEGORIES = [
   'HR consulting firms',
   'Logistics companies',
   'Healthcare clinics',
-  'Dental offices',
+  'Coworking spaces',
   'Veterinary clinics',
   'Physical therapy clinics',
   'Commercial construction companies',
@@ -31,20 +31,23 @@ export const TOP_CATEGORIES = [
   'Financial advisors',
   'Insurance agencies',
   'Business consulting firms',
+  'Coworking spaces',
 ]
 
 // Weighted pick within TOP_CATEGORIES (see pickCategory() in auto-discover/route.ts).
-// Insurance agencies, Property management companies, and Financial advisors are the
-// only three segments with a repeatable click signal across 4 weeks of send data
-// (2026-08-01 – 08-29 Outreach Learning digests); they get picked ~3x as often.
-// Every other TOP_CATEGORIES entry keeps sending — Law firms, Accounting firms,
-// Healthcare clinics, and Business consulting firms haven't shown a click yet at
-// 60-80+ sends each, but the sample per segment is still thin and none are being
-// dropped. Anything not listed here defaults to weight 1.
+// Reset 2026-09-18. The previous weights (Insurance / Property management / Financial
+// advisors at 3x) were based on click data that turned out to be mostly link-scanner
+// bots, not humans (see state/worksheets/outreach-readout-fixes-2026-09-18.md in aios).
+// Coworking spaces is weighted up because 25N (a live coworking client) is the one
+// concrete case study we can point to, and it had the highest open rate of any segment
+// (9/25). Law firms (5/18 opens) and Property management get a smaller bump. Opens are
+// an upper bound (scanners open too), so treat these as directional until replies exist.
+// Dental offices was dropped from PROSPECT_CATEGORIES entirely: 1 open in 49 sends.
+// Anything not listed here defaults to weight 1.
 export const CATEGORY_WEIGHTS: Record<string, number> = {
-  'Insurance agencies': 3,
-  'Property management companies': 3,
-  'Financial advisors': 3,
+  'Coworking spaces': 3,
+  'Law firms': 2,
+  'Property management companies': 2,
 }
 
 export const US_CITIES = [

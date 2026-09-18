@@ -50,7 +50,7 @@ async function buildQueue(): Promise<QueueItem[]> {
   return [...followupBatch, ...initialBatch]
 }
 
-async function sendEmail(to: string, subject: string, html: string, unsubUrl: string): Promise<string | null> {
+async function sendEmail(to: string, subject: string, body: string, unsubUrl: string, plainText: boolean): Promise<string | null> {
   const apiKey = process.env.BREVO_API_KEY
   if (!apiKey) throw new Error('BREVO_API_KEY not configured')
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -61,7 +61,9 @@ async function sendEmail(to: string, subject: string, html: string, unsubUrl: st
       to: [{ email: to }],
       replyTo: { email: REPLY_TO },
       subject,
-      htmlContent: html,
+      // Plain-text templates carry no links and no tracking pixel: nothing for link
+      // scanners to click, and the reply is the only conversion signal.
+      ...(plainText ? { textContent: body } : { htmlContent: body }),
       headers: {
         'List-Unsubscribe': `<${unsubUrl}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ sent: 0, failed: 0, message: 'Nothing to send' })
   }
 
-  const { data: templates, error: tErr } = await sb.from('templates').select('*')
+  const { data: templates, error: tErr } = await sb.from('templates').select('*').eq('active', true)
   if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 })
 
   const templatesByType: Record<string, typeof templates> = {}
@@ -111,7 +113,7 @@ export async function GET(req: NextRequest) {
     const html = renderTemplate(template.body_html, prospect, unsubUrl)
 
     try {
-      const messageId = await sendEmail(prospect.email, subject, html, unsubUrl)
+      const messageId = await sendEmail(prospect.email, subject, html, unsubUrl, Boolean(template.is_plain_text))
       const now = new Date().toISOString()
       const statusMap: Record<string, { status: string; field: string }> = {
         initial: { status: 'initial_sent', field: 'initial_sent_at' },

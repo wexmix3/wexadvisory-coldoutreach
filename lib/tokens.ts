@@ -12,7 +12,16 @@ export function renderTemplate(
   const contactName = firstName || 'there'
   const contactGreeting = firstName ? `, ${firstName}` : ''
   const customIntro = prospect.custom_intro || getIndustryHook(prospect.industry)
+  // pain_signal is a short Haiku phrase ("Manual quote requests and policy review intake")
+  // written at enrichment time. Lowercase the first letter unless it's an acronym so it
+  // reads mid-sentence.
+  const rawPain = prospect.pain_signal?.trim().replace(/[.\s]+$/, '')
+  const painSignal = rawPain
+    ? (/^[A-Z]{2}/.test(rawPain) ? rawPain : rawPain[0].toLowerCase() + rawPain.slice(1))
+    : 'scheduling, intake and follow-ups that still run by hand'
   return template
+    .replace(/\{\{pain_signal\}\}/g, painSignal)
+    .replace(/\{\{industry_lower\}\}/g, (prospect.industry ?? 'small businesses').toLowerCase())
     .replace(/\{\{business_name\}\}/g, prospect.business_name)
     .replace(/\{\{contact_name\}\}/g, contactName)
     .replace(/\{\{contact_greeting\}\}/g, contactGreeting)

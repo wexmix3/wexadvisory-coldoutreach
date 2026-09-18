@@ -13,6 +13,10 @@
       "schedule": "30 12 * * 1-5"
     },
     {
+      "path": "/api/reply-scan",
+      "schedule": "30 13 * * 1-5"
+    },
+    {
       "path": "/api/send-scheduled",
       "schedule": "0 14 * * 1-5"
     },

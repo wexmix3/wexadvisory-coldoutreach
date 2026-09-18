@@ -14,7 +14,7 @@ const REPLY_TO = 'max@wexadvisory.com'
 // actually sends). If omitted, fall back to a random pick from the pool.
 type SendItem = QueueItem & { template_id?: string }
 
-async function sendEmail(to: string, subject: string, html: string, unsubUrl: string): Promise<string | null> {
+async function sendEmail(to: string, subject: string, body: string, unsubUrl: string, plainText: boolean): Promise<string | null> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey || apiKey.startsWith('re_your')) throw new Error('RESEND_API_KEY not configured')
 
@@ -29,7 +29,7 @@ async function sendEmail(to: string, subject: string, html: string, unsubUrl: st
       to,
       reply_to: REPLY_TO,
       subject,
-      html,
+      ...(plainText ? { text: body } : { html: body }),
       headers: {
         'List-Unsubscribe': `<${unsubUrl}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     for (const item of batch) {
       const { prospect, send_type, template_id } = item
-      const variants = templatesByType[send_type] ?? []
+      const variants = (templatesByType[send_type] ?? []).filter(t => t.active !== false)
       // Prefer the variant the client already previewed; fall back to a
       // random pick from the pool if none was passed (or it's stale).
       const template =
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
       const html = renderTemplate(template.body_html, prospect, unsubUrl)
 
       try {
-        const resendId = await sendEmail(prospect.email, subject, html, unsubUrl)
+        const resendId = await sendEmail(prospect.email, subject, html, unsubUrl, Boolean(template.is_plain_text))
 
         // Log the send
         await sb.from('email_log').insert({

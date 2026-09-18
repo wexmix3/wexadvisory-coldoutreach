@@ -56,5 +56,8 @@ export interface Template {
   variant: number
   subject: string
   body_html: string
+  // Plain-text templates are stored in body_html and sent as textContent (no links, no pixel).
+  is_plain_text: boolean
+  active: boolean
   updated_at: string
 }
