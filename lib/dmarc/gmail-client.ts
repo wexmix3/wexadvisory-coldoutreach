@@ -30,12 +30,15 @@ async function gmailFetch<T>(path: string, accessToken: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// Lists message IDs from Google's DMARC report sender within the lookback
-// window. Callers are expected to dedupe against already-processed IDs.
+// Lists DMARC aggregate report message IDs from every reporter (Google,
+// Microsoft, Zoho, ...) within the lookback window. RFC 7489 reports all use
+// a "Report Domain: ..." subject; matching on that instead of one sender
+// address is what lets non-Google reports reach dmarc_records at all.
+// Callers are expected to dedupe against already-processed IDs.
 export async function listDmarcMessageIds(lookbackDays = 2): Promise<string[]> {
   const accessToken = await getGmailAccessToken();
-  const q = encodeURIComponent(`from:noreply-dmarc-support@google.com newer_than:${lookbackDays}d`);
-  const data = await gmailFetch<{ messages?: { id: string }[] }>(`/messages?q=${q}`, accessToken);
+  const q = encodeURIComponent(`subject:"report domain" has:attachment newer_than:${lookbackDays}d`);
+  const data = await gmailFetch<{ messages?: { id: string }[] }>(`/messages?maxResults=500&q=${q}`, accessToken);
   return (data.messages ?? []).map((m) => m.id);
 }
 
@@ -80,11 +83,12 @@ export async function fetchDmarcAttachment(messageId: string): Promise<DmarcAtta
 export async function labelAsProcessed(messageId: string): Promise<void> {
   const accessToken = await getGmailAccessToken();
   const labelId = await getOrCreateLabel(accessToken, 'DMARC-Processed');
-  await fetch(`${GMAIL_BASE}/messages/${messageId}/modify`, {
+  const res = await fetch(`${GMAIL_BASE}/messages/${messageId}/modify`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ addLabelIds: [labelId] }),
   });
+  if (!res.ok) throw new Error(`Failed to label ${messageId}: ${res.status} ${await res.text()}`);
 }
 
 async function getOrCreateLabel(accessToken: string, name: string): Promise<string> {

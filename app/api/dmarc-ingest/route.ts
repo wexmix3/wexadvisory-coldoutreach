@@ -16,7 +16,9 @@ export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const sb = getSupabaseAdmin()
-  const messageIds = await listDmarcMessageIds(2)
+  // ?days=N backfills a longer window (capped at 60); the daily cron uses 2.
+  const days = Math.min(Math.max(Number(req.nextUrl.searchParams.get('days')) || 2, 1), 60)
+  const messageIds = await listDmarcMessageIds(days)
 
   let ingested = 0
   let skipped = 0
@@ -50,7 +52,8 @@ export async function GET(req: NextRequest) {
         if (error) throw new Error(error.message)
       }
 
-      await sb.from('dmarc_processed_emails').insert({ gmail_message_id: messageId })
+      const { error: markErr } = await sb.from('dmarc_processed_emails').insert({ gmail_message_id: messageId })
+      if (markErr) throw new Error(markErr.message)
       await labelAsProcessed(messageId)
       ingested++
     } catch (err) {
@@ -58,5 +61,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ checked: messageIds.length, ingested, skipped, errors })
+  // Non-200 on any per-message failure so the cron run shows as failed in Vercel logs.
+  return NextResponse.json({ checked: messageIds.length, ingested, skipped, errors }, { status: errors.length > 0 ? 500 : 200 })
 }

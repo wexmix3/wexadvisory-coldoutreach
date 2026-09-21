@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import Anthropic from '@anthropic-ai/sdk'
 import { createDmarcSummaryDraft } from '@/lib/dmarc/gmail-draft'
+import { groupSourceIps } from '@/lib/dmarc/source-group'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -21,6 +22,7 @@ type DmarcRow = {
   dkim_result: string | null
   spf_result: string | null
   header_from: string | null
+  org_name: string | null
   end_date: string
 }
 
@@ -34,6 +36,19 @@ function aligned(row: DmarcRow): boolean {
   return row.dkim_result === 'pass' || row.spf_result === 'pass'
 }
 
+function pct(part: number, whole: number): number | null {
+  return whole > 0 ? Math.round((part / whole) * 1000) / 10 : null
+}
+
+function sumMessages(rows: DmarcRow[], filter: (r: DmarcRow) => boolean = () => true): number {
+  return rows.filter(filter).reduce((sum, r) => sum + r.message_count, 0)
+}
+
+// A sending service counts as "new" only if it sent nothing in the 4 weeks
+// before this one. One prior week was too short a baseline once senders are
+// grouped: low-volume services (Resend alerts, forwarders) skip weeks.
+const BASELINE_DAYS = 28
+
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -41,67 +56,87 @@ export async function GET(req: NextRequest) {
   const weekStart = daysAgo(7)
   const priorWeekStart = daysAgo(14)
 
-  const { data: thisWeekData, error: thisWeekErr } = await sb
+  const { data, error } = await sb
     .from('dmarc_records')
-    .select('source_ip, message_count, disposition, dkim_result, spf_result, header_from, end_date')
-    .gte('end_date', weekStart)
+    .select('source_ip, message_count, disposition, dkim_result, spf_result, header_from, org_name, end_date')
+    .gte('end_date', daysAgo(7 + BASELINE_DAYS))
 
-  if (thisWeekErr) return NextResponse.json({ error: thisWeekErr.message }, { status: 500 })
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const { data: priorWeekData, error: priorWeekErr } = await sb
-    .from('dmarc_records')
-    .select('source_ip, message_count, dkim_result, spf_result')
-    .gte('end_date', priorWeekStart)
-    .lt('end_date', weekStart)
-
-  if (priorWeekErr) return NextResponse.json({ error: priorWeekErr.message }, { status: 500 })
-
-  const thisWeek = (thisWeekData ?? []) as DmarcRow[]
-  const priorWeek = (priorWeekData ?? []) as Pick<DmarcRow, 'source_ip' | 'message_count' | 'dkim_result' | 'spf_result'>[]
+  const rows = (data ?? []) as DmarcRow[]
+  const thisWeek = rows.filter((r) => r.end_date >= weekStart)
+  const baseline = rows.filter((r) => r.end_date < weekStart)
+  const priorWeek = baseline.filter((r) => r.end_date >= priorWeekStart)
 
   if (thisWeek.length === 0) {
     return NextResponse.json({ status: 'no_data', message: 'No DMARC records in the trailing 7 days' })
   }
 
-  const totalMessages = thisWeek.reduce((sum, r) => sum + r.message_count, 0)
-  const alignedMessages = thisWeek.filter(aligned).reduce((sum, r) => sum + r.message_count, 0)
-  const passRate = totalMessages > 0 ? alignedMessages / totalMessages : 0
+  const groups = await groupSourceIps(rows.map((r) => r.source_ip))
+  const serviceOf = (r: DmarcRow) => groups.get(r.source_ip)!.key
+  const baselineServices = new Set(baseline.map(serviceOf))
 
-  const priorTotal = priorWeek.reduce((sum, r) => sum + r.message_count, 0)
-  const priorAligned = priorWeek.filter((r) => r.dkim_result === 'pass' || r.spf_result === 'pass').reduce((sum, r) => sum + r.message_count, 0)
-  const priorPassRate = priorTotal > 0 ? priorAligned / priorTotal : null
+  const totalMessages = sumMessages(thisWeek)
+  const priorTotal = sumMessages(priorWeek)
 
-  const priorIps = new Set(priorWeek.map((r) => r.source_ip))
-  const newIps = [...new Set(thisWeek.filter((r) => !priorIps.has(r.source_ip)).map((r) => r.source_ip))]
+  const reporters = [...new Set(thisWeek.map((r) => r.org_name ?? 'unknown'))]
+  const passRateByReporter = Object.fromEntries(
+    reporters.map((org) => {
+      const mine = thisWeek.filter((r) => (r.org_name ?? 'unknown') === org)
+      return [org, { messages: sumMessages(mine), pass_rate: pct(sumMessages(mine, aligned), sumMessages(mine)) }]
+    })
+  )
+
+  const services = [...new Set(thisWeek.map(serviceOf))].map((service) => {
+    const mine = thisWeek.filter((r) => serviceOf(r) === service)
+    const failing = sumMessages(mine, (r) => !aligned(r))
+    // Passes DMARC but only via SPF: DKIM is broken for this sender, and SPF
+    // breaks on any forward. This is how a missing Workspace DKIM record hid
+    // behind a healthy pass rate (found 2026-09-21).
+    const spfOnly = sumMessages(mine, (r) => r.spf_result === 'pass' && r.dkim_result !== 'pass')
+    return {
+      service,
+      sample_hostname: groups.get(mine[0].source_ip)!.sample_hostname,
+      header_from: [...new Set(mine.map((r) => r.header_from ?? 'unknown'))],
+      distinct_ips: new Set(mine.map((r) => r.source_ip)).size,
+      messages: sumMessages(mine),
+      failing_messages: failing,
+      spf_only_pass_messages: spfOnly,
+      new_this_week: !baselineServices.has(service),
+    }
+  })
+  services.sort((a, b) => b.messages - a.messages)
 
   const dispositionCounts: Record<string, number> = {}
   for (const r of thisWeek) {
     dispositionCounts[r.disposition] = (dispositionCounts[r.disposition] ?? 0) + r.message_count
   }
 
-  const failingIps = [...new Set(thisWeek.filter((r) => !aligned(r)).map((r) => r.source_ip))]
-
   const stats = {
     total_messages: totalMessages,
-    pass_rate: Math.round(passRate * 1000) / 10,
-    prior_pass_rate: priorPassRate !== null ? Math.round(priorPassRate * 1000) / 10 : null,
-    new_source_ips: newIps,
-    failing_source_ips: failingIps,
+    pass_rate: pct(sumMessages(thisWeek, aligned), totalMessages),
+    prior_pass_rate: pct(sumMessages(priorWeek, aligned), priorTotal),
+    pass_rate_by_reporter: passRateByReporter,
+    sending_services: services,
+    new_services: services.filter((s) => s.new_this_week).map((s) => s.service),
+    failing_services: services.filter((s) => s.failing_messages > 0).map((s) => s.service),
+    spf_only_services: services.filter((s) => s.spf_only_pass_messages > 0).map((s) => s.service),
     disposition_counts: dispositionCounts,
   }
 
   const prompt = `You are writing a short weekly DMARC summary email for Max Wexley about his domain wexadvisory.com.
 
-Data for the trailing 7 days:
+Data for the trailing 7 days. Source IPs are grouped into sending services by reverse DNS; "new_this_week" means the service sent nothing in the prior ${BASELINE_DAYS} days:
 ${JSON.stringify(stats, null, 2)}
 
 Write a concise plain-English summary (150-250 words) covering:
 1. Overall pass rate and how it compares to last week
-2. Any new sending IPs that showed up this week (could be legitimate new tools, or could be spoofing — flag for his judgment, don't assume either way)
-3. Any IPs consistently failing DKIM/SPF alignment
-4. One clear recommendation if action is warranted, or "no action needed" if things look clean
+2. Any new sending services this week (could be legitimate new tools, or could be spoofing — flag for his judgment, don't assume either way)
+3. Any services with failing messages, identified by their hostname
+4. Any services passing only via SPF with DKIM failing: they pass today but will fail DMARC whenever the mail is forwarded
+5. One clear recommendation if action is warranted, or "no action needed" if things look clean
 
-Output raw HTML only: <p>, <ul>/<li>, <strong> tags. No markdown (no #, no **, no \`\`\` code fences), no preamble, just the summary body.`
+Output raw HTML only: <p>, <ul>/<li>, <strong> tags. No markdown (no #, no **, no \`\`\` code fences), no heading or date (the subject line has them), no preamble, just the summary body.`
 
   const message = await client.messages.create({
     model: process.env.DMARC_MODEL ?? 'claude-haiku-4-5-20251001',

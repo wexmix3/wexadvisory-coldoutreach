@@ -7,7 +7,8 @@ function buildMimeMessage(params: { to: string; from: string; subject: string; b
   const message = [
     `To: ${to}`,
     `From: ${from}`,
-    `Subject: ${subject}`,
+    // RFC 2047 encoded-word: a raw non-ASCII subject (the em dash) renders as mojibake.
+    `Subject: =?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
     'MIME-Version: 1.0',
     'Content-Type: text/html; charset=UTF-8',
     '',
