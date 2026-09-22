@@ -23,7 +23,7 @@ const AUTO_REPLY =/automatic reply|auto-?reply|out of (the )?office|undeliverabl
 // has to explicitly ask for removal, so "no idea what you mean, call me Tuesday" stays a reply.
 // A missed opt-out still stops every follow-up via status='replied'; a false positive would
 // wrongly suppress an interested prospect, which is the worse error of the two.
-const OPT_OUT_OPENER = /^\W*(?:(?:no|stop|pass|remove)\b\s*(?:[.,!;:-]|$)|no\s+thanks?\b|no\s+thank\s+you\b|not\s+interested\b|no\s+longer\s+interested\b|unsubscribe\b|remove\s+me\b|take\s+me\s+off\b)/i
+const OPT_OUT_OPENER = /^\W*(?:(?:no|stop|pass|remove)\b\s*(?:[.,!;:-]|$|(?:from|sent|to|subject):|on\s[^\n]{0,120}?\bwrote:|sent from my\b|-{2,}|_{3,})|no\s+thanks?\b|no\s+thank\s+you\b|not\s+interested\b|no\s+longer\s+interested\b|unsubscribe\b|remove\s+me\b|take\s+me\s+off\b)/i
 const OPT_OUT_PHRASE = /\b(unsubscribe|take me off|remove me from|stop emailing|do not (contact|email)|don't (contact|email))\b/i
 
 function isOptOut(subject: string, snippet: string): boolean {
@@ -57,7 +57,12 @@ export async function GET(req: NextRequest) {
   const byEmail = new Map((prospects ?? []).map((p) => [p.email.toLowerCase(), p.id]))
 
   const token = await getGmailAccessToken()
-  const q = encodeURIComponent('in:inbox newer_than:4d -from:me')
+  // No in:inbox. Max files and archives almost everything (the inbox holds a handful of
+  // threads), so a reply labelled 'Cold Outreach' before this ran was invisible to it --
+  // first real opt-out (2026-09-21) was missed exactly that way. Scope is all mail minus
+  // sent; ~70 messages per 4 days, well under maxResults. Matching is by exact prospect
+  // address, so the extra non-inbox mail costs API calls, not false positives.
+  const q = encodeURIComponent('newer_than:4d -from:me -in:sent')
   const list = await gmail<{ messages?: { id: string }[] }>(`/messages?maxResults=200&q=${q}`, token)
 
   const matched: { email: string; subject: string; optOut?: true }[] = []
