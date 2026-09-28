@@ -15,6 +15,7 @@ export const PROSPECT_CATEGORIES = [
   'Logistics companies',
   'Healthcare clinics',
   'Coworking spaces',
+  'Gyms and fitness studios',
   'Veterinary clinics',
   'Physical therapy clinics',
   'Commercial construction companies',
@@ -29,9 +30,9 @@ export const TOP_CATEGORIES = [
   'Property management companies',
   'Healthcare clinics',
   'Financial advisors',
-  'Insurance agencies',
   'Business consulting firms',
   'Coworking spaces',
+  'Gyms and fitness studios',
 ]
 
 // Weighted pick within TOP_CATEGORIES (see pickCategory() in auto-discover/route.ts).
@@ -44,10 +45,15 @@ export const TOP_CATEGORIES = [
 // an upper bound (scanners open too), so treat these as directional until replies exist.
 // Dental offices was dropped from PROSPECT_CATEGORIES entirely: 1 open in 49 sends.
 // Anything not listed here defaults to weight 1.
+// Adjusted 2026-09-28 on Brevo-era opens (08-12 to 09-28, 310 sends): Gyms (11/41) and
+// Real estate (6/28) weighted up, Gyms re-added to the pools. Property management back
+// to 1 (2/32). Insurance agencies moved out of TOP_CATEGORIES (0/24) but stays in
+// PROSPECT_CATEGORIES. Still opens only: 1 reply (an opt-out) in 310 sends.
 export const CATEGORY_WEIGHTS: Record<string, number> = {
   'Coworking spaces': 3,
+  'Gyms and fitness studios': 2,
   'Law firms': 2,
-  'Property management companies': 2,
+  'Real estate agencies': 2,
 }
 
 export const US_CITIES = [
