@@ -77,6 +77,13 @@ export function isValidEmail(email: string): boolean {
   return true
 }
 
+// National chains and franchisors that Places returns for local categories
+// (mostly coworking). Their inbox is a corporate one, not a local owner.
+const CHAIN_DOMAINS = new Set([
+  'wework.com', 'regus.com', 'industriousoffice.com', 'spacesworks.com',
+  'expansive.com', 'servcorp.com', 'davincivirtual.com',
+])
+
 export function extractDomain(website: string): string | null {
   try { return new URL(website).hostname.replace(/^www\./, '') } catch { return null }
 }
@@ -229,6 +236,7 @@ export async function discoverProspects(city: string, category: string): Promise
     .filter(p => p.websiteUri)
     .map(place => ({ place, domain: extractDomain(place.websiteUri!) }))
     .filter((c): c is { place: NewPlace; domain: string } => c.domain !== null)
+    .filter(c => !CHAIN_DOMAINS.has(c.domain.toLowerCase()))
 
   const emailResults = await Promise.allSettled(
     candidates.map(({ place, domain }) => findEmail(place.websiteUri!, domain))

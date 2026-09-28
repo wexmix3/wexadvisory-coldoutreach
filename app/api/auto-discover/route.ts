@@ -55,7 +55,14 @@ function pickWeighted(pool: string[], weights: Record<string, number>): string {
   return pool[pool.length - 1]!
 }
 
+// One category per run, so weights alone are noisy: coworking went all of
+// September without being drawn despite a 3x weight. Mondays always run it,
+// since 25N is the one live case study (2026-09-28).
+const FIXED_DAY_CATEGORY: Record<number, string> = { 1: 'Coworking spaces' }
+
 function pickCategory(): string {
+  const fixed = FIXED_DAY_CATEGORY[new Date().getUTCDay()]
+  if (fixed) return fixed
   const useTop = Math.random() < 0.7
   if (useTop) return pickWeighted(TOP_CATEGORIES, CATEGORY_WEIGHTS)
   return pick(PROSPECT_CATEGORIES)
