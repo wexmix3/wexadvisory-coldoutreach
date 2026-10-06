@@ -8,7 +8,7 @@ export function renderTemplate(
   prospect: Prospect,
   unsubscribeUrl: string
 ): string {
-  const firstName = prospect.contact_name?.split(' ')[0]
+  const firstName = prospect.contact_name?.trim().split(/\s+/)[0]
   const contactName = firstName || 'there'
   const contactGreeting = firstName ? `, ${firstName}` : ''
   const customIntro = prospect.custom_intro || getIndustryHook(prospect.industry)

@@ -84,6 +84,14 @@ const CHAIN_DOMAINS = new Set([
   'expansive.com', 'servcorp.com', 'davincivirtual.com',
 ])
 
+// A listing whose "website" is a link shortener, link-in-bio page or review profile is not
+// the business's own domain. Hunter then returns people who work at that platform
+// (kevin.gilbertson@tinyurl.com was queued as the contact for a gym, 2026-10-06).
+const NOT_OWN_SITE_DOMAINS = new Set([
+  'tinyurl.com', 'bit.ly', 'linktr.ee', 'goo.gl', 't.co', 'rebrand.ly', 'lnk.bio', 'beacons.ai',
+  'yelp.com', 'facebook.com', 'instagram.com', 'linkedin.com', 'google.com', 'sites.google.com',
+])
+
 export function extractDomain(website: string): string | null {
   try { return new URL(website).hostname.replace(/^www\./, '') } catch { return null }
 }
@@ -237,6 +245,7 @@ export async function discoverProspects(city: string, category: string): Promise
     .map(place => ({ place, domain: extractDomain(place.websiteUri!) }))
     .filter((c): c is { place: NewPlace; domain: string } => c.domain !== null)
     .filter(c => !CHAIN_DOMAINS.has(c.domain.toLowerCase()))
+    .filter(c => !NOT_OWN_SITE_DOMAINS.has(c.domain.toLowerCase()))
 
   const emailResults = await Promise.allSettled(
     candidates.map(({ place, domain }) => findEmail(place.websiteUri!, domain))
