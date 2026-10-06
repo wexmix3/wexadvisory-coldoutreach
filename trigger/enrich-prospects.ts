@@ -1,6 +1,6 @@
 import { task } from "@trigger.dev/sdk"
 import Anthropic from "@anthropic-ai/sdk"
-import { fetchHtml, stripHtml } from "@/lib/scraper"
+import { enrichProspect, nameFitsEmail, RATE_LIMIT_DELAY_MS } from "@/lib/enrichment"
 import { createClient } from "@supabase/supabase-js"
 
 // Supabase realtime-js checks for WebSocket at construction time.
@@ -10,167 +10,7 @@ if (!globalThis.WebSocket) {
 }
 
 const BATCH_SIZE = 20
-// 1200ms between Claude calls = max 50 req/min, under Tier 1 Haiku limit
-const RATE_LIMIT_DELAY_MS = 1200
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-
-interface EnrichmentResult {
-  fit_score: number
-  custom_intro: string
-  pain_signal: string
-}
-
-function extractJson(raw: string): EnrichmentResult {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim()
-  const match = cleaned.match(/\{[\s\S]*\}/)
-  if (!match) throw new Error("No JSON object found")
-  return JSON.parse(match[0]) as EnrichmentResult
-}
-
-// Code-based quality gate on Claude's enrichment output -- no extra API call,
-// runs in <1ms, same pattern as ai-audit's checkAuditQuality. Nothing here
-// checked custom_intro/pain_signal for correctness before this; the prompt's
-// own "don't start with 'I noticed'" rule was never enforced, only prompted.
-// Also catches the "perfect email, wrong customer" failure mode -- a
-// plausible-sounding intro that doesn't actually reference this business.
-function checkEnrichmentQuality(result: EnrichmentResult, businessName: string): string | null {
-  if (result.custom_intro.length < 20) return "custom_intro too short/empty"
-  if (/^i noticed\b/i.test(result.custom_intro.trim())) return "custom_intro uses banned 'I noticed' opener"
-  if (result.pain_signal.length < 8) return "pain_signal too short/empty"
-
-  const nameWords = businessName.toLowerCase().split(/\s+/).filter((w) => w.length >= 4)
-  const intro = result.custom_intro.toLowerCase()
-  const mentionsBusiness = nameWords.length === 0 || nameWords.some((w) => intro.includes(w))
-  if (!mentionsBusiness) return `custom_intro doesn't reference "${businessName}"`
-
-  return null
-}
-
-async function callClaude(client: Anthropic, systemPrompt: string, userPrompt: string): Promise<EnrichmentResult | null> {
-  const MAX_RETRIES = 3
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const message = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 200,
-        // Instructions are identical across every prospect in a batch — cached
-        // as a system block so only the first call in a run (within the 5-min
-        // TTL) pays full input price for it; the rest read it back at 0.1x.
-        // Per-prospect specifics stay in the user message, which is what
-        // actually varies call to call.
-        system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
-        messages: [{ role: "user", content: userPrompt }],
-      })
-      const raw = (message.content[0] as { type: string; text: string }).text.trim()
-      const parsed = extractJson(raw)
-      return {
-        fit_score: Math.max(0, Math.min(100, Math.round(parsed.fit_score))),
-        custom_intro: parsed.custom_intro?.trim() ?? "",
-        pain_signal: parsed.pain_signal?.trim() ?? "",
-      }
-    } catch (err: unknown) {
-      const status = (err as { status?: number })?.status
-      if ((status === 429 || status === 529) && attempt < MAX_RETRIES - 1) {
-        await sleep(RATE_LIMIT_DELAY_MS * Math.pow(2, attempt))
-        continue
-      }
-      return null
-    }
-  }
-  return null
-}
-
-async function scrapeCompanyContext(website: string): Promise<string> {
-  const base = (() => {
-    try { return new URL(website).origin } catch { return null }
-  })()
-  if (!base) return ""
-
-  const sections: { label: string; path: string }[] = [
-    { label: "Homepage", path: "" },
-    { label: "About", path: "/about" },
-    { label: "Blog", path: "/blog" },
-    { label: "News", path: "/news" },
-    { label: "Careers", path: "/careers" },
-    { label: "Jobs", path: "/jobs" },
-  ]
-
-  const results: string[] = []
-  let fetched = 0
-
-  for (const { label, path } of sections) {
-    if (fetched >= 3) break
-    const url = path ? `${base}${path}` : website
-    const html = await fetchHtml(url)
-    if (!html) continue
-    const text = stripHtml(html).slice(0, 1200)
-    if (text.length < 50) continue
-    results.push(`[${label}]: ${text}`)
-    fetched++
-  }
-
-  return results.join("\n\n").slice(0, 3500)
-}
-
-async function enrichProspect(
-  client: Anthropic,
-  prospect: {
-    id: string
-    business_name: string
-    industry: string | null
-    city: string | null
-    state: string | null
-    website: string | null
-  }
-): Promise<EnrichmentResult | null> {
-  const location = [prospect.city, prospect.state].filter(Boolean).join(", ")
-
-  const siteContext = prospect.website ? await scrapeCompanyContext(prospect.website) : ""
-
-  const websiteSection = siteContext
-    ? `Website context:\n${siteContext}`
-    : `Website: ${prospect.website ?? "not available"} (could not be scraped — base your response on industry knowledge)`
-
-  // Static across every prospect in a batch — this is the cached system block.
-  const systemPrompt = `You are analyzing a small business to personalize a cold email about AI automation services.
-
-Reply with valid JSON only — no prose, no markdown:
-{
-  "fit_score": <integer 0-100>,
-  "custom_intro": "<1-2 sentences referencing something specific about this business — a service they likely offer, a manual process typical for their industry, or a pain point implied by their site>",
-  "pain_signal": "<5-10 word phrase naming the specific manual process>"
-}
-
-fit_score guidelines:
-- 80-100: Clear manual ops — many services listed, no tech/automation mentions, contact-form-only, owner-operated feel
-- 60-79: Likely manual, maybe one tool mentioned
-- 40-59: Mixed signals
-- 20-39: Some automation already in place
-- 0-19: Tech-forward, wrong fit, or site had no useful content
-- If a careers/jobs page was found with open roles, raise score by 10-15 points (active hiring = budget available)
-- If the about page mentions a small team or founder-run business, raise score — these are the ideal buyers
-
-custom_intro must feel human and specific, and must NOT start with "I noticed" — vary the opening every time. Bad (generic): "Most businesses waste hours on manual tasks." Bad (formulaic, do not imitate this opener): "I noticed Peak Pilates still handles class waitlists manually." Good examples — study the variety of openings, don't default to any single pattern:
-- "Peak Pilates likely handles class waitlists and member check-ins over email — most studios that size reclaim 4-6 hours a week automating that."
-- "Running a multi-location dental practice usually means someone's manually chasing insurance verifications between offices."
-- "Law firms this size typically still route intake calls to a human before anything hits the calendar."
-- "Between managing listings and client follow-up, real estate teams like this rarely have time left to automate the repetitive parts."`
-
-  // Only the per-prospect specifics — everything that actually varies call to call.
-  const userPrompt = `Business: ${prospect.business_name} | Industry: ${prospect.industry ?? "unknown"} | Location: ${location || "unknown"}
-${websiteSection}`
-
-  const result = await callClaude(client, systemPrompt, userPrompt)
-  if (!result) return null
-
-  const qualityIssue = checkEnrichmentQuality(result, prospect.business_name)
-  if (qualityIssue) {
-    console.warn(`[enrich-prospects] quality gate failed for ${prospect.id} (${prospect.business_name}): ${qualityIssue}`)
-    return null
-  }
-
-  return result
-}
 
 export const enrichProspectsTask = task({
   id: "enrich-prospects",
@@ -186,7 +26,7 @@ export const enrichProspectsTask = task({
 
     const { data: prospects, error } = await sb
       .from("prospects")
-      .select("id, business_name, industry, city, state, website")
+      .select("id, business_name, industry, city, state, website, contact_name, email")
       .in("enrichment_status", ["pending", "failed"])
       .not("website", "is", null)
       .in("status", ["queued", "new"])
@@ -195,26 +35,31 @@ export const enrichProspectsTask = task({
 
     if (error) throw new Error(`DB query failed: ${error.message}`)
     if (!prospects || prospects.length === 0) {
-      return { enriched: 0, failed: 0, message: "Nothing to enrich" }
+      return { enriched: 0, failed: 0, named: 0, message: "Nothing to enrich" }
     }
 
     let enriched = 0
     let failed = 0
+    let named = 0
 
     for (let i = 0; i < prospects.length; i++) {
       const prospect = prospects[i]
       const result = await enrichProspect(client, prospect)
 
       if (result) {
-        const { fit_score, custom_intro, pain_signal } = result
+        const { fit_score, custom_intro, pain_signal, contact_first_name } = result
+        // A name Hunter already found is never overwritten by one read off the site.
+        const fillName = !prospect.contact_name?.trim() && contact_first_name && nameFitsEmail(contact_first_name, prospect.email)
         await sb.from("prospects").update({
           fit_score,
           custom_intro,
           pain_signal,
+          ...(fillName ? { contact_name: contact_first_name } : {}),
           enrichment_status: "done",
           enriched_at: new Date().toISOString(),
         }).eq("id", prospect.id)
         enriched++
+        if (fillName) named++
       } else {
         await sb.from("prospects").update({ enrichment_status: "failed" }).eq("id", prospect.id)
         failed++
@@ -225,6 +70,6 @@ export const enrichProspectsTask = task({
       }
     }
 
-    return { enriched, failed, total: prospects.length }
+    return { enriched, failed, named, total: prospects.length }
   },
 })

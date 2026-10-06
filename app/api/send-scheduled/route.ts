@@ -29,10 +29,24 @@ function daysAgo(n: number): string {
 
 type QueueItem = { prospect: Prospect; send_type: 'initial' | 'followup1' | 'followup2' }
 
-async function buildQueue(): Promise<QueueItem[]> {
+// First emails only go to a prospect we can greet by name. Through September 2026, 83% of
+// new prospects were nameless scraped inboxes ("Hi there" to info@/office@), and every reply
+// was a front-desk decline. Follow-ups are not gated, so sequences already in flight finish.
+// Set REQUIRE_CONTACT_NAME=false to switch the hold off.
+const REQUIRE_CONTACT_NAME = process.env.REQUIRE_CONTACT_NAME !== 'false'
+
+async function buildQueue(): Promise<{ queue: QueueItem[]; heldNoContactName: number }> {
   const sb = getSupabaseAdmin()
-  const [{ data: initial }, { data: f1 }, { data: f2 }] = await Promise.all([
-    sb.from('prospects').select('*').eq('status', 'queued').not('fit_score', 'is', null).gte('fit_score', MIN_FIT_SCORE).order('fit_score', { ascending: false, nullsFirst: false }).limit(500),
+  const sendable = () => sb.from('prospects').select('*').eq('status', 'queued').not('fit_score', 'is', null).gte('fit_score', MIN_FIT_SCORE)
+  // neq alone also drops NULLs: in SQL, NULL <> '' is not true.
+  const named = () => sendable().neq('contact_name', '')
+  const { data: initial, error: iErr } = await (REQUIRE_CONTACT_NAME ? named() : sendable()).order('fit_score', { ascending: false, nullsFirst: false }).limit(500)
+  if (iErr) throw new Error(`Initial queue query failed: ${iErr.message}`)
+  const { count: nameless, error: cErr } = await sb.from('prospects').select('id', { count: 'exact', head: true }).eq('status', 'queued').not('fit_score', 'is', null).gte('fit_score', MIN_FIT_SCORE).or('contact_name.is.null,contact_name.eq.')
+  if (cErr) throw new Error(`Held-prospect count failed: ${cErr.message}`)
+  const heldNoContactName = REQUIRE_CONTACT_NAME ? (nameless ?? 0) : 0
+
+  const [{ data: f1 }, { data: f2 }] = await Promise.all([
     // Order by sent_at ASC so prospects waiting the longest go first
     sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).order('initial_sent_at', { ascending: true }).limit(500),
     sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).order('followup1_sent_at', { ascending: true }).limit(500),
@@ -47,7 +61,13 @@ async function buildQueue(): Promise<QueueItem[]> {
   const followupBatch = followups.slice(0, MAX_FOLLOWUP_PER_BATCH)
   const initialBatch: QueueItem[] = (initial ?? []).slice(0, MAX_INITIAL_PER_BATCH).map(p => ({ prospect: p, send_type: 'initial' as const }))
 
-  return [...followupBatch, ...initialBatch]
+  // Not an error, but it must not look like a broken cron: the hold is working as designed
+  // and the supply of named prospects has run out.
+  if (initialBatch.length === 0 && heldNoContactName > 0) {
+    console.warn(`[send-scheduled] 0 first emails: ${heldNoContactName} eligible prospect(s) held for having no contact name (REQUIRE_CONTACT_NAME)`)
+  }
+
+  return { queue: [...followupBatch, ...initialBatch], heldNoContactName }
 }
 
 async function sendEmail(to: string, subject: string, body: string, unsubUrl: string, plainText: boolean): Promise<string | null> {
@@ -87,9 +107,9 @@ export async function GET(req: NextRequest) {
   }
 
   const sb = getSupabaseAdmin()
-  const queue = await buildQueue()
+  const { queue, heldNoContactName } = await buildQueue()
   if (queue.length === 0) {
-    return NextResponse.json({ sent: 0, failed: 0, message: 'Nothing to send' })
+    return NextResponse.json({ sent: 0, failed: 0, heldNoContactName, message: 'Nothing to send' })
   }
 
   const { data: templates, error: tErr } = await sb.from('templates').select('*').eq('active', true)
@@ -101,7 +121,7 @@ export async function GET(req: NextRequest) {
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin
-  const results = { sent: 0, failed: 0, errors: [] as string[] }
+  const results = { sent: 0, failed: 0, heldNoContactName, errors: [] as string[] }
 
   for (const { prospect, send_type } of queue) {
     const variants = templatesByType[send_type] ?? []
