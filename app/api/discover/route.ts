@@ -4,6 +4,8 @@ import { discoverProspects, DiscoveredProspect } from '@/lib/discovery'
 
 export type { DiscoveredProspect }
 export const dynamic = 'force-dynamic'
+// Fit scoring before the Hunter lookup can take ~35s (see lib/discovery.ts).
+export const maxDuration = 60
 
 const rateMap = new Map<string, { count: number; resetAt: number }>()
 
