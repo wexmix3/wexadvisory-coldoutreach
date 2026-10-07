@@ -29,7 +29,7 @@ export default function DiscoverPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
   const [savedCount, setSavedCount] = useState<number | null>(null)
-  const [debugStats, setDebugStats] = useState<{ placesFound: number; withWebsite: number; withEmail: number } | null>(null)
+  const [debugStats, setDebugStats] = useState<{ placesFound: number; withWebsite: number; alreadyKnown?: number; scored?: number; lookedUp?: number; withEmail: number } | null>(null)
 
   async function discover() {
     if (!city.trim()) return
@@ -167,10 +167,14 @@ export default function DiscoverPage() {
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600">
             Found <strong>{debugStats.placesFound}</strong> businesses on Google →{' '}
             <strong>{debugStats.withWebsite}</strong> had websites →{' '}
+            <strong>{debugStats.alreadyKnown ?? 0}</strong> already in your list →{' '}
+            <strong>{debugStats.scored ?? 0}</strong> scored for fit →{' '}
+            <strong>{debugStats.lookedUp ?? 0}</strong> best fits looked up →{' '}
             <strong className={debugStats.withEmail === 0 ? 'text-red-600' : 'text-green-700'}>{debugStats.withEmail}</strong> had emails found
-            {debugStats.withEmail === 0 && debugStats.withWebsite > 0 && (
-              <span className="text-red-600"> — No emails found via website scraping or Hunter. Try a different industry.</span>
+            {debugStats.withEmail === 0 && (debugStats.lookedUp ?? 0) > 0 && (
+              <span className="text-red-600"> — No named contact found for the best fits. Try a different city or industry.</span>
             )}
+            <span className="block text-xs text-gray-500 mt-1">Only the top fits get a contact lookup, because the free Hunter plan allows 50 a month.</span>
           </div>
         )}
       </div>

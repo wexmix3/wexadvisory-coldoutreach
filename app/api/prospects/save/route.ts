@@ -73,6 +73,11 @@ export async function POST(req: NextRequest) {
         google_place_id: p.google_place_id || null,
         hunter_confidence: p.hunter_confidence,
         status: 'queued',
+        // Discovery already scored this business; storing it stops the enrich
+        // cron paying to score it again.
+        ...(typeof p.fit_score === 'number' && p.custom_intro && p.pain_signal
+          ? { fit_score: p.fit_score, custom_intro: p.custom_intro, pain_signal: p.pain_signal, enrichment_status: 'done', enriched_at: new Date().toISOString() }
+          : {}),
       })
       if (error) {
         errors.push(`${p.email}: ${error.message}`)

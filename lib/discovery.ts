@@ -177,12 +177,16 @@ async function hunterEmail(domain: string): Promise<HunterResult> {
     url.searchParams.set('api_key', apiKey)
     url.searchParams.set('limit', '10')
 
-    const res = await fetch(url.toString())
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) })
     const data = await res.json()
 
     if (data.errors?.some((e: { code: number }) => e.code === 429)) return { status: 'quota_exceeded' }
 
-    const emails: Array<{ value: string; first_name?: string; last_name?: string; confidence: number; position?: string }> = data.data?.emails ?? []
+    // Hunter's own verdict on each address comes free with the search. verify-contacts
+    // no longer spends a verification credit on Hunter-sourced addresses, so an
+    // address Hunter marks invalid is dropped here.
+    const emails: Array<{ value: string; first_name?: string; last_name?: string; confidence: number; position?: string; verification?: { status?: string | null } | null }> =
+      (data.data?.emails ?? []).filter((e: { verification?: { status?: string | null } | null }) => e.verification?.status !== 'invalid')
     if (emails.length === 0) return { status: 'not_found' }
 
     // Require a named contact — skip if no first name (generic contact@/info@ type)
@@ -200,29 +204,28 @@ async function hunterEmail(domain: string): Promise<HunterResult> {
   } catch { return { status: 'not_found' } }
 }
 
-// Hunter.io is the primary source (named contacts only -- generic contact@/info@
-// addresses hurt sender reputation). Fall back to scraping the site itself only
-// when Hunter's quota is exhausted, not when Hunter simply found no named contact --
-// scraping tends to surface generic aliases, which is a deliberate quality tradeoff
-// made only to keep discovery running during a quota outage.
-async function findEmail(website: string, domain: string): Promise<FoundEmail | null> {
-  const result = await hunterEmail(domain)
-  if (result.status === 'found') return result.email
-  if (result.status === 'quota_exceeded') return scrapeEmail(website)
-  return null
-}
-
 // Hunter's free plan is 50 domain searches a month. Discovery used to run one for
 // every business Places returned (up to ~20 a run), before anything was known about
 // fit, so the month's quota was gone by day 2 and about a third of it went to
 // businesses that score under the send threshold. Now each candidate is scored first
 // and only the best few get a lookup: 2 a run x ~22 weekday runs = 44, inside the 50.
-const HUNTER_LOOKUPS_PER_RUN = Number(process.env.HUNTER_LOOKUPS_PER_RUN ?? 2)
+// An empty or malformed env value must not turn into 0 or NaN lookups without anyone noticing.
+function envNumber(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw.trim() === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+const HUNTER_LOOKUPS_PER_RUN = envNumber('HUNTER_LOOKUPS_PER_RUN', 2)
 // Same default as send-scheduled's MIN_FIT_SCORE: a prospect below it is never emailed.
-const MIN_FIT_SCORE = Number(process.env.MIN_FIT_SCORE ?? 50)
+const MIN_FIT_SCORE = envNumber('MIN_FIT_SCORE', 50)
 const SCORING_CONCURRENCY = 5
-// auto-discover has a 60s function limit; leave room for Places, Hunter and the inserts.
-const SCORING_BUDGET_MS = 35_000
+// auto-discover has a 60s function limit. No new candidate is started after
+// SCORING_BUDGET_MS, and scoring is abandoned outright at SCORING_HARD_STOP_MS,
+// which leaves ~20s for Places, Hunter (8s cap) and the inserts.
+const SCORING_BUDGET_MS = 30_000
+const SCORING_HARD_STOP_MS = 38_000
 
 export function pickForLookup<T extends { fit_score: number }>(scored: T[], minFit: number, limit: number): T[] {
   return scored
@@ -241,7 +244,9 @@ async function scoreCandidates(candidates: Candidate[], category: string, city: 
   if (candidates.length === 0) return { scored: [], attempted: 0 }
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey || apiKey.startsWith('your_')) throw new Error('ANTHROPIC_API_KEY not configured (needed to score fit before the Hunter lookup)')
-  const client = new Anthropic({ apiKey })
+  // The SDK defaults (10 minute timeout, 2 retries) have no place in a 60s function;
+  // callClaude already retries rate limits itself.
+  const client = new Anthropic({ apiKey, timeout: 15_000, maxRetries: 0 })
 
   const deadline = Date.now() + SCORING_BUDGET_MS
   const scored: ScoredCandidate[] = []
@@ -264,8 +269,11 @@ async function scoreCandidates(candidates: Candidate[], category: string, city: 
       if (enrichment) scored.push({ ...candidate, fit_score: enrichment.fit_score, enrichment })
     }
   }
-  await Promise.all(Array.from({ length: Math.min(SCORING_CONCURRENCY, candidates.length) }, worker))
-  return { scored, attempted }
+  const pool = Promise.all(Array.from({ length: Math.min(SCORING_CONCURRENCY, candidates.length) }, worker))
+  // A call already in flight at the deadline is not waited for: whatever is scored
+  // by the hard stop is what the run works with.
+  await Promise.race([pool, new Promise(resolve => setTimeout(resolve, SCORING_HARD_STOP_MS))])
+  return { scored: [...scored], attempted }
 }
 
 // Thrown specifically on Places quota/billing exhaustion (429/403) so callers can
@@ -308,8 +316,10 @@ export async function discoverProspects(city: string, category: string, options:
   withWebsite: number
   alreadyKnown: number
   scored: number
+  scoringFailed: number
   belowFit: number
   lookedUp: number
+  hunterQuotaExhausted: boolean
 }> {
   const places = await getPlaces(city, category)
 
@@ -332,18 +342,34 @@ export async function discoverProspects(city: string, category: string, options:
     throw new Error(`Fit scoring failed for all ${attempted} candidates; no Hunter lookups were made`)
   }
 
-  const chosen = pickForLookup(scored, MIN_FIT_SCORE, HUNTER_LOOKUPS_PER_RUN)
+  const eligible = pickForLookup(scored, MIN_FIT_SCORE, scored.length)
+  const chosen = eligible.slice(0, HUNTER_LOOKUPS_PER_RUN)
 
-  const emailResults = await Promise.allSettled(
-    chosen.map(({ place, domain }) => findEmail(place.websiteUri!, domain))
-  )
+  // Hunter is the primary source (named contacts only; generic contact@/info@
+  // addresses hurt sender reputation). hunterEmail never throws.
+  const hunterResults = await Promise.all(chosen.map(c => hunterEmail(c.domain)))
+
+  // Once the month's Hunter quota is gone, the lookup cap protects nothing, and
+  // scraping the site is free. Scrape every fit-eligible candidate, as discovery
+  // did during an outage before, so the site-derived owner name can still produce
+  // a named contact. Scraping is used only for a quota outage, never when Hunter
+  // answered "no named contact here": it mostly surfaces generic inboxes.
+  const hunterQuotaExhausted = hunterResults.some(r => r.status === 'quota_exceeded')
+  const targets = hunterQuotaExhausted ? eligible : chosen
+
+  const emailResults = await Promise.allSettled(targets.map(async (c, i): Promise<FoundEmail | null> => {
+    const hunter = hunterResults[i]
+    if (hunter?.status === 'found') return hunter.email
+    if (hunterQuotaExhausted && hunter?.status !== 'not_found') return scrapeEmail(c.place.websiteUri!)
+    return null
+  }))
 
   const prospects: DiscoveredProspect[] = []
   const unresolved: UnresolvedCandidate[] = []
 
-  for (let i = 0; i < chosen.length; i++) {
+  for (let i = 0; i < targets.length; i++) {
     const result = emailResults[i]
-    const { place, enrichment } = chosen[i]
+    const { place, enrichment } = targets[i]
     const address = place.formattedAddress ?? ''
 
     if (result.status !== 'fulfilled' || !result.value) {
@@ -388,7 +414,10 @@ export async function discoverProspects(city: string, category: string, options:
     withWebsite: withSite.length,
     alreadyKnown: known.size,
     scored: scored.length,
+    // Model failure, timeout or the enrichment quality gate. Not looked up this run.
+    scoringFailed: attempted - scored.length,
     belowFit: scored.filter(c => c.fit_score < MIN_FIT_SCORE).length,
     lookedUp: chosen.length,
+    hunterQuotaExhausted,
   }
 }
