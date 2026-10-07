@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { discoverProspects, DiscoveredProspect } from '@/lib/discovery'
+import { knownPlaceIdsFrom } from '@/lib/known-places'
 
 export type { DiscoveredProspect }
 export const dynamic = 'force-dynamic'
+// Fit scoring before the Hunter lookup can take ~35s (see lib/discovery.ts).
+export const maxDuration = 60
 
 const rateMap = new Map<string, { count: number; resetAt: number }>()
 
@@ -29,7 +32,9 @@ export async function POST(req: NextRequest) {
     const { city, category } = await req.json()
     if (!city || !category) return NextResponse.json({ error: 'city and category required' }, { status: 400 })
 
-    const { prospects, placesFound, withWebsite } = await discoverProspects(city, category)
+    const { prospects, placesFound, withWebsite, alreadyKnown, scored, lookedUp } = await discoverProspects(city, category, {
+      knownPlaceIds: knownPlaceIdsFrom(getSupabaseAdmin()),
+    })
 
     // Cross-reference against existing prospects by google_place_id
     if (prospects.length > 0) {
@@ -54,6 +59,9 @@ export async function POST(req: NextRequest) {
       debug: {
         placesFound,
         withWebsite,
+        alreadyKnown,
+        scored,
+        lookedUp,
         withEmail: prospects.length,
       },
     })

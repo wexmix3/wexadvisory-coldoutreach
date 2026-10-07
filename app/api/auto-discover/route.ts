@@ -3,13 +3,15 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { discoverProspects, PlacesQuotaExceededError } from '@/lib/discovery'
 import { US_CITIES, PROSPECT_CATEGORIES, TOP_CATEGORIES, CATEGORY_WEIGHTS } from '@/lib/constants'
 import { triggerMapsScraperFallback } from '@/lib/maps-scraper-fallback'
+import { knownPlaceIdsFrom } from '@/lib/known-places'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 // Hard ceiling on paid-lookup spend (Google Places + Hunter.io) per calendar
-// month. Each cron run costs ~1 Places search + up to ~20 Hunter domain-search
-// lookups. 300 prospects/month keeps discovery well under the $25/mo overall
+// month. Each cron run costs ~1 Places search, up to ~20 Haiku fit-scoring calls
+// (about $0.07) and at most HUNTER_LOOKUPS_PER_RUN Hunter domain searches (see
+// lib/discovery.ts). 300 prospects/month keeps discovery well under the $25/mo overall
 // automation ceiling even before Hunter's own account quota kicks in — this
 // guards against a future scheduling change (e.g. hourly instead of daily)
 // silently multiplying spend with no one noticing until the Hunter bill lands.
@@ -87,12 +89,22 @@ export async function GET(req: NextRequest) {
   let prospects: Awaited<ReturnType<typeof discoverProspects>>['prospects'] = []
   let unresolved: Awaited<ReturnType<typeof discoverProspects>>['unresolved'] = []
   let placesFound = 0
+  let funnel = { withWebsite: 0, alreadyKnown: 0, scored: 0, scoringFailed: 0, belowFit: 0, lookedUp: 0, hunterQuotaExhausted: false }
 
   try {
-    const result = await discoverProspects(city, category)
+    const result = await discoverProspects(city, category, { knownPlaceIds: knownPlaceIdsFrom(sbCap) })
     prospects = result.prospects
     unresolved = result.unresolved
     placesFound = result.placesFound
+    funnel = {
+      withWebsite: result.withWebsite,
+      alreadyKnown: result.alreadyKnown,
+      scored: result.scored,
+      scoringFailed: result.scoringFailed,
+      belowFit: result.belowFit,
+      lookedUp: result.lookedUp,
+      hunterQuotaExhausted: result.hunterQuotaExhausted,
+    }
   } catch (err) {
     if (err instanceof PlacesQuotaExceededError) {
       const dispatched = await triggerMapsScraperFallback(city, category)
@@ -111,7 +123,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (prospects.length === 0) {
-    return NextResponse.json({ city, category, added: 0, skipped: 0, placesFound })
+    return NextResponse.json({ city, category, added: 0, skipped: 0, placesFound, ...funnel, unresolvedNoEmail: unresolved.length })
   }
 
   const sb = getSupabaseAdmin()
@@ -124,6 +136,7 @@ export async function GET(req: NextRequest) {
   const newProspects = prospects.filter(p => !existingEmails.has(p.email))
 
   let added = 0
+  const insertErrors: string[] = []
   for (const p of newProspects) {
     const { error } = await sb.from('prospects').insert({
       business_name: p.business_name,
@@ -136,15 +149,30 @@ export async function GET(req: NextRequest) {
       google_place_id: p.google_place_id || null,
       hunter_confidence: p.hunter_confidence,
       status: 'queued',
+      fit_score: p.fit_score,
+      custom_intro: p.custom_intro,
+      pain_signal: p.pain_signal,
+      enrichment_status: 'done',
+      enriched_at: new Date().toISOString(),
     })
-    if (!error) added++
+    if (error) insertErrors.push(`${p.email}: ${error.message}`)
+    else added++
+  }
+
+  // A Hunter lookup was spent on each of these. If none could be stored the run
+  // failed, and it has to show as failed rather than as a quiet "added: 0".
+  if (newProspects.length > 0 && added === 0) {
+    console.error('auto-discover: every insert failed:', insertErrors.join(' | '))
+    return NextResponse.json({ error: 'Every prospect insert failed', city, category, placesFound, ...funnel, insertErrors }, { status: 500 })
   }
 
   return NextResponse.json({
     city,
     category,
     placesFound,
+    ...funnel,
     added,
+    insertErrors: insertErrors.length ? insertErrors : undefined,
     skipped: prospects.length - newProspects.length,
     // Businesses Hunter found no named contact for (not a quota issue — genuinely
     // nothing there). Previously dropped with zero trace. Not written to `prospects`

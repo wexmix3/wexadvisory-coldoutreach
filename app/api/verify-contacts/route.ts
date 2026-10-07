@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { verifyContact } from '@/lib/verify'
+import { verifyContact, worthHunterVerification } from '@/lib/verify'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -12,6 +12,9 @@ function isAuthorized(req: NextRequest): boolean {
 }
 
 const BATCH_SIZE = Number(process.env.VERIFY_BATCH_SIZE ?? 30)
+// Same rules and defaults as send-scheduled.
+const MIN_FIT_SCORE = Number(process.env.MIN_FIT_SCORE ?? 50)
+const REQUIRE_CONTACT_NAME = process.env.REQUIRE_CONTACT_NAME !== 'false'
 
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
@@ -22,7 +25,7 @@ export async function GET(req: NextRequest) {
 
   const { data: prospects, error } = await sb
     .from('prospects')
-    .select('id, email')
+    .select('id, email, fit_score, contact_name, hunter_confidence')
     .eq('status', 'queued')
     .eq('email_verification_status', 'unverified')
     .order('created_at', { ascending: true })
@@ -37,9 +40,12 @@ export async function GET(req: NextRequest) {
   let risky = 0
   let unknown = 0
   let pruned = 0
+  let hunterChecks = 0
 
   for (const p of prospects) {
-    const result = await verifyContact(p.email)
+    const useHunter = worthHunterVerification(p, { minFit: MIN_FIT_SCORE, requireName: REQUIRE_CONTACT_NAME })
+    if (useHunter) hunterChecks++
+    const result = await verifyContact(p.email, { useHunter })
     const now = new Date().toISOString()
 
     if (result === 'undeliverable') {
@@ -66,5 +72,6 @@ export async function GET(req: NextRequest) {
     risky,
     unknown,
     pruned,
+    hunterChecks,
   })
 }
