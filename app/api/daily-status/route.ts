@@ -15,12 +15,33 @@ type LogRow = {
   sent_at: string
 }
 
+// Same rules and defaults as send-scheduled.
+const MIN_FIT_SCORE = Number(process.env.MIN_FIT_SCORE ?? 50)
+
+// Discovery adds few prospects a day by design (Hunter allows 50 lookups a month),
+// so "added 0" for a day is normal and several days of it is not. The cron's own
+// response only reaches Vercel's logs; this puts the numbers in the daily email.
+type Supply = {
+  added_today: number
+  added_today_named: number
+  added_today_from_hunter: number
+  ready_to_send: number
+}
+
+function supplyLines(s: Supply): string {
+  return [
+    `New prospects found today: ${s.added_today} (${s.added_today_named} with a named contact, ${s.added_today_from_hunter} from Hunter)`,
+    `Named prospects waiting for a first email: ${s.ready_to_send}`,
+  ].join('\n')
+}
+
 async function sendNotificationEmail(
   total_sent: number,
   total_failed: number,
   by_template: { template_type: string; sent: number; failed: number }[],
   last_sent_at: string | null,
-  date: string
+  date: string,
+  supply: Supply
 ): Promise<void> {
   const apiKey = process.env.RESEND_CONFIRMATION_API_KEY
   if (!apiKey) throw new Error('RESEND_CONFIRMATION_API_KEY not configured')
@@ -39,8 +60,8 @@ async function sendNotificationEmail(
     .join('\n')
 
   const body = noActivity
-    ? `No outreach emails were sent today (${date}).\n\nThe 2pm UTC cron may not have run, or there were no prospects queued.\n\nCheck the dashboard: https://outreach-tool-inky.vercel.app`
-    : `Date: ${date}\nSent: ${total_sent}\nFailed: ${total_failed}\n${lastSentLine}\n\nBreakdown:\n${breakdownRows}\n\nDashboard: https://outreach-tool-inky.vercel.app`
+    ? `No outreach emails were sent today (${date}).\n\nThe 2pm UTC cron may not have run, or there were no prospects queued.\n\n${supplyLines(supply)}\n\nCheck the dashboard: https://outreach-tool-inky.vercel.app`
+    : `Date: ${date}\nSent: ${total_sent}\nFailed: ${total_failed}\n${lastSentLine}\n\nBreakdown:\n${breakdownRows}\n\n${supplyLines(supply)}\n\nDashboard: https://outreach-tool-inky.vercel.app`
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -89,11 +110,33 @@ export async function GET(req: NextRequest) {
     failed: logs.filter((l) => l.template_type === type && l.status === 'failed').length,
   }))
 
-  const payload = { date, total_sent, total_failed, by_template, last_sent_at }
+  const { data: addedRows, error: addedErr } = await sb
+    .from('prospects')
+    .select('contact_name, hunter_confidence')
+    .gte('created_at', todayStr)
+  if (addedErr) return NextResponse.json({ error: addedErr.message }, { status: 500 })
+
+  const { count: readyCount, error: readyErr } = await sb
+    .from('prospects')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'queued')
+    .gte('fit_score', MIN_FIT_SCORE)
+    .neq('contact_name', '')
+  if (readyErr) return NextResponse.json({ error: readyErr.message }, { status: 500 })
+
+  const added = (addedRows ?? []) as { contact_name: string | null; hunter_confidence: number | null }[]
+  const supply: Supply = {
+    added_today: added.length,
+    added_today_named: added.filter((r) => r.contact_name?.trim()).length,
+    added_today_from_hunter: added.filter((r) => (r.hunter_confidence ?? 0) >= 50).length,
+    ready_to_send: readyCount ?? 0,
+  }
+
+  const payload = { date, total_sent, total_failed, by_template, last_sent_at, supply }
 
   if (notify) {
     try {
-      await sendNotificationEmail(total_sent, total_failed, by_template, last_sent_at, date)
+      await sendNotificationEmail(total_sent, total_failed, by_template, last_sent_at, date, supply)
       return NextResponse.json({ ...payload, notified: true })
     } catch (err) {
       return NextResponse.json(
