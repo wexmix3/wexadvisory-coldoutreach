@@ -11,6 +11,27 @@ export type SourceGroup = {
   sample_hostname: string | null
 }
 
+// The services that send mail on our behalf, per From domain, keyed the same
+// way as SourceGroup.key. Anything else showing up under one of our domains is
+// a third party re-sending our mail (a recipient's auto-forward, a security
+// scanner) or someone spoofing us. A forward that alters the message breaks
+// DKIM, and nothing on our side can prevent that, so those must not drag down
+// the number that says whether our own setup is healthy.
+// Known blind spot: a Gmail recipient forwarding Workspace mail also shows as
+// google.com on the root domain and is counted as ours.
+// Adding a new sending tool means adding it here; until then it is reported as
+// a new third-party service every week, which is the prompt to do so.
+const OWN_SENDERS: Record<string, string[]> = {
+  'wexadvisory.com': ['google.com', 'amazonses.com'], // Workspace, Resend
+  'send.wexadvisory.com': ['sender-sib.com'], // Brevo
+}
+
+export type SenderOrigin = 'own' | 'third_party'
+
+export function senderOrigin(headerFrom: string | null, serviceKey: string): SenderOrigin {
+  return OWN_SENDERS[(headerFrom ?? '').toLowerCase()]?.includes(serviceKey) ? 'own' : 'third_party'
+}
+
 const PTR_TIMEOUT_MS = 2000
 
 function prefixKey(ip: string): string {
