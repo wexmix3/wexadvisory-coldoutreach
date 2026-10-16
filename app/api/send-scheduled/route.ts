@@ -20,6 +20,13 @@ const FROM_EMAIL = 'max@send.wexadvisory.com'
 const REPLY_TO = 'maxwexley@wexadvisory.com'
 const FOLLOWUP1_DAYS = 5
 const FOLLOWUP2_DAYS = 7
+// A follow-up only goes out while the previous email is recent. Oldest-first with no window sent
+// every slot from 2026-10-14 to prospects first emailed 2026-05-31 (409 May-August rows ahead of
+// any October contact), so new named contacts never got a follow-up.
+const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS ?? 30)
+// A prospect whose send fails this many times is retired. %20info@njcrash.com failed every run
+// from 2026-10-06 and held the first follow-up slot each day.
+const MAX_SEND_FAILURES = 3
 
 function daysAgo(n: number): string {
   const d = new Date()
@@ -46,13 +53,16 @@ async function buildQueue(): Promise<{ queue: QueueItem[]; heldNoContactName: nu
   if (cErr) throw new Error(`Held-prospect count failed: ${cErr.message}`)
   const heldNoContactName = REQUIRE_CONTACT_NAME ? (nameless ?? 0) : 0
 
-  const [{ data: f1 }, { data: f2 }] = await Promise.all([
-    // Order by sent_at ASC so prospects waiting the longest go first
-    sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).order('initial_sent_at', { ascending: true }).limit(500),
-    sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).order('followup1_sent_at', { ascending: true }).limit(500),
+  const [{ data: f1, error: f1Err }, { data: f2, error: f2Err }] = await Promise.all([
+    // Newest first: the follow-up lands on schedule for the most recent (named) contacts, and
+    // anything the cap can't reach ages out of the window instead of blocking the queue
+    sb.from('prospects').select('*').eq('status', 'initial_sent').lte('initial_sent_at', daysAgo(FOLLOWUP1_DAYS)).gte('initial_sent_at', daysAgo(FOLLOWUP_WINDOW_DAYS)).order('initial_sent_at', { ascending: false }).limit(500),
+    sb.from('prospects').select('*').eq('status', 'followup1_sent').lte('followup1_sent_at', daysAgo(FOLLOWUP2_DAYS)).gte('followup1_sent_at', daysAgo(FOLLOWUP_WINDOW_DAYS)).order('followup1_sent_at', { ascending: false }).limit(500),
   ])
+  if (f1Err) throw new Error(`Follow-up 1 queue query failed: ${f1Err.message}`)
+  if (f2Err) throw new Error(`Follow-up 2 queue query failed: ${f2Err.message}`)
 
-  // f2 before f1, both sorted oldest-first within their group
+  // f2 before f1, both sorted newest-first within their group
   const followups: QueueItem[] = [
     ...(f2 ?? []).map(p => ({ prospect: p, send_type: 'followup2' as const })),
     ...(f1 ?? []).map(p => ({ prospect: p, send_type: 'followup1' as const })),
@@ -150,6 +160,13 @@ export async function GET(req: NextRequest) {
       results.failed++
       results.errors.push(`${prospect.email}: ${err instanceof Error ? err.message : 'Unknown'}`)
       await sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, variant: template.variant, subject: renderTemplate(template.subject, prospect, ''), body_html: '', status: 'failed' })
+      const { count: failures, error: fErr } = await sb.from('email_log').select('id', { count: 'exact', head: true }).eq('prospect_id', prospect.id).eq('status', 'failed')
+      if (fErr) {
+        results.errors.push(`${prospect.email}: failure count query failed: ${fErr.message}`)
+      } else if ((failures ?? 0) >= MAX_SEND_FAILURES) {
+        const { error: xErr } = await sb.from('prospects').update({ status: 'exhausted' }).eq('id', prospect.id)
+        results.errors.push(xErr ? `${prospect.email}: retire failed: ${xErr.message}` : `${prospect.email}: retired after ${failures} failed sends`)
+      }
     }
 
     await new Promise(r => setTimeout(r, 200))
