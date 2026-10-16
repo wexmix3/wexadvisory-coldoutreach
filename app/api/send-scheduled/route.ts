@@ -24,7 +24,7 @@ const FOLLOWUP2_DAYS = 7
 // every slot from 2026-10-14 to prospects first emailed 2026-05-31 (409 May-August rows ahead of
 // any October contact), so new named contacts never got a follow-up.
 const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS ?? 30)
-// A prospect whose send fails this many times is retired. %20info@njcrash.com failed every run
+// A prospect whose send fails this many times in a row (in runs where other sends worked) is retired. %20info@njcrash.com failed every run
 // from 2026-10-06 and held the first follow-up slot each day.
 const MAX_SEND_FAILURES = 3
 
@@ -132,6 +132,7 @@ export async function GET(req: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin
   const results = { sent: 0, failed: 0, heldNoContactName, errors: [] as string[] }
+  const failedThisRun: Prospect[] = []
 
   for (const { prospect, send_type } of queue) {
     const variants = templatesByType[send_type] ?? []
@@ -160,16 +161,28 @@ export async function GET(req: NextRequest) {
       results.failed++
       results.errors.push(`${prospect.email}: ${err instanceof Error ? err.message : 'Unknown'}`)
       await sb.from('email_log').insert({ prospect_id: prospect.id, template_type: send_type, variant: template.variant, subject: renderTemplate(template.subject, prospect, ''), body_html: '', status: 'failed' })
-      const { count: failures, error: fErr } = await sb.from('email_log').select('id', { count: 'exact', head: true }).eq('prospect_id', prospect.id).eq('status', 'failed')
-      if (fErr) {
-        results.errors.push(`${prospect.email}: failure count query failed: ${fErr.message}`)
-      } else if ((failures ?? 0) >= MAX_SEND_FAILURES) {
-        const { error: xErr } = await sb.from('prospects').update({ status: 'exhausted' }).eq('id', prospect.id)
-        results.errors.push(xErr ? `${prospect.email}: retire failed: ${xErr.message}` : `${prospect.email}: retired after ${failures} failed sends`)
-      }
+      failedThisRun.push(prospect)
     }
 
     await new Promise(r => setTimeout(r, 200))
+  }
+
+  // Retire only when other sends in this run went through: if every send failed, the problem is
+  // Brevo or the key, not the address, and retiring would drop good prospects.
+  if (results.sent > 0) {
+    for (const prospect of failedThisRun) {
+      const { data: lastSent, error: lErr } = await sb.from('email_log').select('sent_at').eq('prospect_id', prospect.id).eq('status', 'sent').order('sent_at', { ascending: false }).limit(1)
+      if (lErr) { results.errors.push(`${prospect.email}: last-send query failed: ${lErr.message}`); continue }
+      // Failures since the last successful send only, so old one-off failures don't count
+      let q = sb.from('email_log').select('id', { count: 'exact', head: true }).eq('prospect_id', prospect.id).eq('status', 'failed')
+      if (lastSent?.[0]?.sent_at) q = q.gt('sent_at', lastSent[0].sent_at)
+      const { count: failures, error: fErr } = await q
+      if (fErr) { results.errors.push(`${prospect.email}: failure count query failed: ${fErr.message}`); continue }
+      if ((failures ?? 0) >= MAX_SEND_FAILURES) {
+        const { error: xErr } = await sb.from('prospects').update({ status: 'exhausted' }).eq('id', prospect.id)
+        results.errors.push(xErr ? `${prospect.email}: retire failed: ${xErr.message}` : `${prospect.email}: retired after ${failures} failed sends in a row`)
+      }
+    }
   }
 
   return NextResponse.json(results)
