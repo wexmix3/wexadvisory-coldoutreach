@@ -1,5 +1,6 @@
 import { Prospect } from './types'
 import { getIndustryHook } from './industry-hooks'
+import { shortBusinessName } from './business-name'
 
 const CALENDLY_URL = process.env.CALENDLY_URL ?? 'https://calendly.com/maxwexley-wexadvisory/free-strategy-call'
 
@@ -22,7 +23,7 @@ export function renderTemplate(
   return template
     .replace(/\{\{pain_signal\}\}/g, painSignal)
     .replace(/\{\{industry_lower\}\}/g, (prospect.industry ?? 'small businesses').toLowerCase())
-    .replace(/\{\{business_name\}\}/g, prospect.business_name)
+    .replace(/\{\{business_name\}\}/g, shortBusinessName(prospect.business_name))
     .replace(/\{\{contact_name\}\}/g, contactName)
     .replace(/\{\{contact_greeting\}\}/g, contactGreeting)
     .replace(/\{\{industry\}\}/g, prospect.industry ?? 'your industry')
