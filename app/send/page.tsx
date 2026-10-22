@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { QueueItem } from '@/app/api/queue/route'
 import { Template } from '@/lib/types'
 import { getIndustryHook } from '@/lib/industry-hooks'
+import { shortBusinessName } from '@/lib/business-name'
 
 const TYPE_LABEL: Record<string, string> = {
   initial: 'Initial',
@@ -21,7 +22,7 @@ const CALENDLY_URL = 'https://calendly.com/maxwexley-wexadvisory/free-strategy-c
 function renderTokens(template: string, item: QueueItem, unsubUrl: string) {
   const p = item.prospect
   return template
-    .replace(/\{\{business_name\}\}/g, p.business_name)
+    .replace(/\{\{business_name\}\}/g, shortBusinessName(p.business_name))
     .replace(/\{\{contact_name\}\}/g, p.contact_name?.split(' ')[0] ?? 'there')
     .replace(/\{\{industry\}\}/g, p.industry ?? 'your industry')
     .replace(/\{\{city\}\}/g, p.city ?? 'your city')
