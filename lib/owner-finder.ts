@@ -53,7 +53,7 @@ export const domainOf = (url: string | null | undefined): string | null => {
   try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase() } catch { return null }
 }
 
-type ApolloPerson = {
+export type ApolloPerson = {
   id: string
   first_name?: string
   title?: string | null
@@ -67,9 +67,9 @@ export function pickSenior(people: ApolloPerson[], businessName: string, domain:
     .sort((a, b) => (seniority(a.title) ?? 9) - (seniority(b.title) ?? 9))[0] ?? null
 }
 
-type AlexandriaResult = { error?: { code: string; message: string }; data?: Record<string, unknown> }
+export type AlexandriaResult = { error?: { code: string; message: string }; data?: Record<string, unknown> }
 
-async function alexandria(key: string, calls: object[]): Promise<AlexandriaResult[]> {
+export async function alexandria(key: string, calls: object[]): Promise<AlexandriaResult[]> {
   const res = await fetch(`${FIRECRAWL}/v2/scrape`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -82,12 +82,18 @@ async function alexandria(key: string, calls: object[]): Promise<AlexandriaResul
   return json.data.alexandria
 }
 
-export async function firecrawlCredits(key: string): Promise<number> {
+export async function firecrawlUsage(key: string): Promise<{ remaining: number; periodEnd: Date }> {
   const res = await fetch(`${FIRECRAWL}/v2/team/credit-usage`, { headers: { Authorization: `Bearer ${key}` } })
   if (!res.ok) throw new Error(`Firecrawl credit check HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  const json = await res.json() as { data?: { remainingCredits?: number } }
+  const json = await res.json() as { data?: { remainingCredits?: number; billingPeriodEnd?: string } }
   if (typeof json.data?.remainingCredits !== 'number') throw new Error('Firecrawl credit check returned no remainingCredits')
-  return json.data.remainingCredits
+  const periodEnd = new Date(json.data.billingPeriodEnd ?? '')
+  if (isNaN(periodEnd.getTime())) throw new Error('Firecrawl credit check returned no billingPeriodEnd')
+  return { remaining: json.data.remainingCredits, periodEnd }
+}
+
+export async function firecrawlCredits(key: string): Promise<number> {
+  return (await firecrawlUsage(key)).remaining
 }
 
 type Candidate = { id: string; business_name: string; email: string; website: string; notes: string | null }
