@@ -26,42 +26,67 @@ export async function GET(req: NextRequest) {
   const since = new Date()
   since.setDate(since.getDate() - 30)
 
-  const { data: logs, error } = await sb
-    .from('email_log')
-    .select('template_type, status, opened_at, clicked_at, prospect_id, reply_category')
-    .gte('sent_at', since.toISOString())
-    .eq('status', 'sent')
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!logs || logs.length === 0) {
+  // A bounce webhook re-marks its row 'bounced', so 'sent' alone dropped every bounce from the count.
+  type Log = { id: string; template_type: string; status: string; opened_at: string | null; clicked_at: string | null; prospect_id: string; sent_at: string }
+  const logs: Log[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from('email_log')
+      .select('id, template_type, status, opened_at, clicked_at, prospect_id, sent_at')
+      .gte('sent_at', since.toISOString())
+      .in('status', ['sent', 'bounced'])
+      .order('sent_at', { ascending: true })
+      .range(from, from + 999)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    logs.push(...((data ?? []) as Log[]))
+    if (!data || data.length < 1000) break
+  }
+  if (logs.length === 0) {
     return NextResponse.json({ message: 'No data in last 30 days' })
   }
 
-  const prospectIds = [...new Set(logs.map((l: { prospect_id: string }) => l.prospect_id))]
-  const { data: prospects } = await sb
-    .from('prospects')
-    .select('id, industry')
-    .in('id', prospectIds)
+  type ProspectRow = { id: string; industry: string | null; replied_at: string | null; unsubscribed_at: string | null }
+  const prospectIds = [...new Set(logs.map(l => l.prospect_id))]
+  const prospectMap = new Map<string, ProspectRow>()
+  // Chunked so the id list never outgrows the request URL.
+  for (let i = 0; i < prospectIds.length; i += 100) {
+    const { data, error: pErr } = await sb
+      .from('prospects')
+      .select('id, industry, replied_at, unsubscribed_at')
+      .in('id', prospectIds.slice(i, i + 100))
+    if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 })
+    for (const p of (data ?? []) as ProspectRow[]) prospectMap.set(p.id, p)
+  }
 
-  const industryMap = Object.fromEntries(
-    (prospects ?? []).map((p: { id: string; industry: string | null }) => [p.id, p.industry ?? 'Unknown'])
-  )
+  // Replies live on the prospect, not on an email: reply-scan sets replied_at (plus unsubscribed_at for a "no"),
+  // and the unsubscribe link / Brevo spam events set only unsubscribed_at. Credit each to the last email the
+  // prospect got before it happened. email_log.reply_category is never set.
+  const repliedTo = new Map<string, 'reply' | 'optout'>()
+  for (const p of prospectMap.values()) {
+    const at = p.replied_at ?? p.unsubscribed_at
+    if (!at) continue
+    const last = logs
+      .filter(l => l.prospect_id === p.id && new Date(l.sent_at) <= new Date(at))
+      .sort((a, b) => b.sent_at.localeCompare(a.sent_at))[0]
+    if (last) repliedTo.set(last.id, p.unsubscribed_at ? 'optout' : 'reply')
+  }
 
   type GroupKey = string
-  type GroupStats = { sends: number; opens: number; clicks: number; replies: number; bounces: number; template_type: string; industry: string }
+  type GroupStats = { sends: number; opens: number; clicks: number; replies: number; optouts: number; bounces: number; template_type: string; industry: string }
   const groups = new Map<GroupKey, GroupStats>()
 
-  for (const log of logs as Array<{ template_type: string; status: string; opened_at: string | null; clicked_at: string | null; prospect_id: string; reply_category: string | null }>) {
-    const industry = industryMap[log.prospect_id] ?? 'Unknown'
+  for (const log of logs as Log[]) {
+    const industry = prospectMap.get(log.prospect_id)?.industry ?? 'Unknown'
     const key = `${industry}__${log.template_type}`
     if (!groups.has(key)) {
-      groups.set(key, { sends: 0, opens: 0, clicks: 0, replies: 0, bounces: 0, template_type: log.template_type, industry })
+      groups.set(key, { sends: 0, opens: 0, clicks: 0, replies: 0, optouts: 0, bounces: 0, template_type: log.template_type, industry })
     }
     const g = groups.get(key)!
     g.sends++
     if (log.opened_at) g.opens++
     if (log.clicked_at) g.clicks++
-    if (log.reply_category === 'interested') g.replies++
+    if (repliedTo.get(log.id) === 'reply') g.replies++
+    if (repliedTo.get(log.id) === 'optout') g.optouts++
     if (log.status === 'bounced') g.bounces++
   }
 
@@ -83,6 +108,7 @@ export async function GET(req: NextRequest) {
       <td style="padding:4px 8px">${pct(g.opens, g.sends)}</td>
       <td style="padding:4px 8px">${pct(g.clicks, g.sends)}</td>
       <td style="padding:4px 8px">${pct(g.replies, g.sends)}</td>
+      <td style="padding:4px 8px">${pct(g.optouts, g.sends)}</td>
       <td style="padding:4px 8px">${pct(g.bounces, g.sends)}</td>
     </tr>`
   ).join('\n')
@@ -110,6 +136,7 @@ export async function GET(req: NextRequest) {
           <th style="padding:4px 8px;text-align:left">Open %</th>
           <th style="padding:4px 8px;text-align:left">Click %</th>
           <th style="padding:4px 8px;text-align:left">Reply %</th>
+          <th style="padding:4px 8px;text-align:left">Opt-out %</th>
           <th style="padding:4px 8px;text-align:left">Bounce %</th>
         </tr>
       </thead>
