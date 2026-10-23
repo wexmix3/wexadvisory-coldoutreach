@@ -13,6 +13,10 @@
       "schedule": "30 11 * * 1-5"
     },
     {
+      "path": "/api/reapproach",
+      "schedule": "0 12 * * 1-5"
+    },
+    {
       "path": "/api/verify-contacts",
       "schedule": "30 12 * * 1-5"
     },

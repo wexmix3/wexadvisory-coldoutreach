@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
       }),
     })
     if (!res.ok) throw new Error(`Resend HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
-    return NextResponse.json({ sent: true, owner: report.owner, other: report.other })
+    return NextResponse.json({ sent: true, owner: report.owner, reapproach: report.reapproach, other: report.other })
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Unknown error' }, { status: 500 })
   }

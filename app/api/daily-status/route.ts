@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { OWNER_TAG } from '@/lib/owner-finder'
+import { REAPPROACH_TAG } from '@/lib/reapproach'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,15 +30,22 @@ type Supply = {
   ready_to_send: number
   owner_searched: number
   owner_found: number
+  reapproach_checked: number
+  reapproach_candidates: number
+  reapproach_queued: number
 }
 
 function supplyLines(s: Supply): string {
   const ownerLine = s.owner_searched
     ? `Owner finder today: searched ${s.owner_searched}, found ${s.owner_found} decision makers`
     : 'Owner finder today: no search ran (out of free Firecrawl credits, nothing left to search, or the 11:30 UTC job failed)'
+  const reapproachLine = s.reapproach_checked || s.reapproach_queued
+    ? `Re-approach today: checked ${s.reapproach_checked} old businesses, ${s.reapproach_candidates} owner candidates, ${s.reapproach_queued} owners queued`
+    : 'Re-approach today: nothing checked (all old businesses already checked, or the 12:00 UTC job failed)'
   return [
     `New prospects found today: ${s.added_today} (${s.added_today_named} with a named contact, ${s.added_today_from_hunter} from Hunter)`,
     ownerLine,
+    reapproachLine,
     `Named prospects waiting for a first email: ${s.ready_to_send}`,
   ].join('\n')
 }
@@ -139,6 +147,15 @@ export async function GET(req: NextRequest) {
   if (ownerErr) return NextResponse.json({ error: ownerErr.message }, { status: 500 })
   const ownerNotes = (ownerRows ?? []).map((r: { notes: string | null }) => r.notes ?? '')
 
+  // lib/reapproach.ts tags each old business it checks, and each owner row it queues, with "[reapproach YYYY-MM-DD]".
+  const { data: reRows, error: reErr } = await sb
+    .from('prospects')
+    .select('notes, status')
+    .ilike('notes', `%${REAPPROACH_TAG} ${date}]%`)
+  if (reErr) return NextResponse.json({ error: reErr.message }, { status: 500 })
+  const reNotes = (reRows ?? []).map((r: { notes: string | null }) => r.notes ?? '')
+  const reTag = `${REAPPROACH_TAG} ${date}]`
+
   const added = (addedRows ?? []) as { contact_name: string | null; hunter_confidence: number | null }[]
   const supply: Supply = {
     added_today: added.length,
@@ -147,6 +164,9 @@ export async function GET(req: NextRequest) {
     ready_to_send: readyCount ?? 0,
     owner_searched: ownerNotes.length,
     owner_found: ownerNotes.filter((n) => n.includes(`${OWNER_TAG} ${date}] found`)).length,
+    reapproach_checked: reNotes.filter((n) => n.includes(`${reTag} excluded`) || n.includes(`${reTag} candidate`) || n.includes(`${reTag} no senior`)).length,
+    reapproach_candidates: reNotes.filter((n) => n.includes(`${reTag} candidate`)).length,
+    reapproach_queued: reNotes.filter((n) => n.includes(`${reTag} found`)).length,
   }
 
   const payload = { date, total_sent, total_failed, by_template, last_sent_at, supply }
