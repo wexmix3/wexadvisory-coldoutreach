@@ -59,10 +59,18 @@ const BLOCKED_DOMAINS = new Set([
   'yelp.com', 'instagram.com', 'facebook.com', 'twitter.com', 'tiktok.com',
   'linkedin.com', 'google.com', 'yahoo.com', 'hotmail.com',
   'ir.com',  // investor relations redirects
+  // Website-template placeholders that reached the table: abc@xyz.com, example@mail.com, name@company.com
+  'xyz.com', 'mail.com', 'company.com', 'example.com', 'yourdomain.com', 'yourcompany.com', 'website.com',
 ])
 
+// Placeholder local parts from contact-form templates ("user@domain.com", "example@mysite.com"). Whole local part
+// only, so "username@" or "abcdental@" pass.
+const PLACEHOLDER_LOCAL = /^(example|user|yourname|your\.?name|name|abc|test|john\.?doe|jane\.?doe|first\.?last|firstname)$/i
+
 const IMAGE_EXTS = /\.(webp|png|jpe?g|gif|svg|ico|bmp|tiff?)$/i
-const VALID_EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,6}$/
+// TLDs run past 6 letters (.community, .fitness, .digital); a {2,6} cap dropped real owners at scrape time and let
+// the cleanup route delete them from the queue.
+const VALID_EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,24}$/
 
 function sanitizeEmail(raw: string): string {
   try { raw = decodeURIComponent(raw) } catch { /* ignore malformed encoding */ }
@@ -80,6 +88,7 @@ export function isValidEmail(email: string): boolean {
   if (IMAGE_EXTS.test('.' + tld)) return false
   if (SKIP_PATTERNS.some(p => email.includes(p))) return false
   if (BLOCKED_DOMAINS.has(domain.toLowerCase())) return false
+  if (PLACEHOLDER_LOCAL.test(local)) return false
   if (HTML_ENTITY_RE.test(local)) return false
   return true
 }
