@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { OWNER_TAG } from '@/lib/owner-finder'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,11 +27,17 @@ type Supply = {
   added_today_named: number
   added_today_from_hunter: number
   ready_to_send: number
+  owner_searched: number
+  owner_found: number
 }
 
 function supplyLines(s: Supply): string {
+  const ownerLine = s.owner_searched
+    ? `Owner finder today: searched ${s.owner_searched}, found ${s.owner_found} decision makers`
+    : 'Owner finder today: no search ran (out of free Firecrawl credits, nothing left to search, or the 11:30 UTC job failed)'
   return [
     `New prospects found today: ${s.added_today} (${s.added_today_named} with a named contact, ${s.added_today_from_hunter} from Hunter)`,
+    ownerLine,
     `Named prospects waiting for a first email: ${s.ready_to_send}`,
   ].join('\n')
 }
@@ -124,12 +131,22 @@ export async function GET(req: NextRequest) {
     .neq('contact_name', '')
   if (readyErr) return NextResponse.json({ error: readyErr.message }, { status: 500 })
 
+  // The owner finder tags every prospect it searches with "[owner-finder YYYY-MM-DD] ..." (lib/owner-finder.ts).
+  const { data: ownerRows, error: ownerErr } = await sb
+    .from('prospects')
+    .select('notes')
+    .ilike('notes', `%${OWNER_TAG} ${date}]%`)
+  if (ownerErr) return NextResponse.json({ error: ownerErr.message }, { status: 500 })
+  const ownerNotes = (ownerRows ?? []).map((r: { notes: string | null }) => r.notes ?? '')
+
   const added = (addedRows ?? []) as { contact_name: string | null; hunter_confidence: number | null }[]
   const supply: Supply = {
     added_today: added.length,
     added_today_named: added.filter((r) => r.contact_name?.trim()).length,
     added_today_from_hunter: added.filter((r) => (r.hunter_confidence ?? 0) >= 50).length,
     ready_to_send: readyCount ?? 0,
+    owner_searched: ownerNotes.length,
+    owner_found: ownerNotes.filter((n) => n.includes(`${OWNER_TAG} ${date}] found`)).length,
   }
 
   const payload = { date, total_sent, total_failed, by_template, last_sent_at, supply }
