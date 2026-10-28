@@ -2,7 +2,7 @@ import { Prospect } from './types'
 import { getIndustryHook } from './industry-hooks'
 import { shortBusinessName } from './business-name'
 
-const CALENDLY_URL = process.env.CALENDLY_URL ?? 'https://calendly.com/maxwexley-wexadvisory/free-strategy-call'
+const CALENDLY_URL = process.env.CALENDLY_URL ?? 'https://calendly.com/maxwexley-wexadvisory/30min'
 
 export function renderTemplate(
   template: string,

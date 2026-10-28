@@ -17,7 +17,7 @@ const TYPE_COLOR: Record<string, string> = {
   followup2: 'bg-purple-100 text-purple-700',
 }
 
-const CALENDLY_URL = 'https://calendly.com/maxwexley-wexadvisory/free-strategy-call'
+const CALENDLY_URL = 'https://calendly.com/maxwexley-wexadvisory/30min'
 
 function renderTokens(template: string, item: QueueItem, unsubUrl: string) {
   const p = item.prospect
