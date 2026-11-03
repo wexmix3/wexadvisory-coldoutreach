@@ -10,6 +10,8 @@ const NAMED_RULE_START = '2026-10-07'
 // Owner-finder contacts: the 2026-10-22/23 trials (notes cite B-180 / B-183) and the daily step's finds.
 const OWNER_NOTE = /B-18[03]\b|\[owner-finder [\d-]+\] found/
 const REAPPROACH_NOTE = /\[reapproach [\d-]+\] found/
+// Imported from the Origami trial export (scripts/import-origami.local.mjs): its own row, so it never skews the others.
+const ORIGAMI_NOTE = /\[origami [\d-]+\]/
 export const DECISION_SAMPLE = 60
 
 type Row = {
@@ -60,7 +62,7 @@ async function latestReplyText(token: string, email: string): Promise<string> {
   return snippet.replace(/&(amp|lt|gt|quot|#39);/g, (_m, e: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" }[e]!))
 }
 
-export type OwnerReplyReport = { subject: string; html: string; owner: Omit<Cohort, "replies">; reapproach: Omit<Cohort, "replies">; other: Omit<Cohort, "replies"> }
+export type OwnerReplyReport = { subject: string; html: string; owner: Omit<Cohort, "replies">; reapproach: Omit<Cohort, "replies">; origami: Omit<Cohort, "replies">; other: Omit<Cohort, "replies"> }
 
 export async function buildOwnerReplyReport(sb: SupabaseClient): Promise<OwnerReplyReport> {
   const { data, error } = await sb
@@ -78,10 +80,12 @@ export async function buildOwnerReplyReport(sb: SupabaseClient): Promise<OwnerRe
   const isReapproach = (r: Row) => REAPPROACH_NOTE.test(r.notes ?? '')
   const owner = cohort('Owner-finder contacts', rows.filter(isOwner))
   const reapproach = cohort('Re-approach owners (2nd contact)', rows.filter(isReapproach))
-  const other = cohort('Other named contacts (since 10-07)', rows.filter(r => !isOwner(r) && !isReapproach(r) && r.initial_sent_at && r.initial_sent_at >= NAMED_RULE_START))
+  const isOrigami = (r: Row) => ORIGAMI_NOTE.test(r.notes ?? '')
+  const origami = cohort('Origami trial imports', rows.filter(isOrigami))
+  const other = cohort('Other named contacts (since 10-07)', rows.filter(r => !isOwner(r) && !isReapproach(r) && !isOrigami(r) && r.initial_sent_at && r.initial_sent_at >= NAMED_RULE_START))
   const queuedOwners = rows.filter(r => isOwner(r) && r.status === 'queued').length
 
-  const token = owner.replies.length || reapproach.replies.length || other.replies.length ? await getGmailAccessToken() : ''
+  const token = owner.replies.length || reapproach.replies.length || origami.replies.length || other.replies.length ? await getGmailAccessToken() : ''
   const replyItems = async (c: Cohort) => {
     const items: string[] = []
     for (const r of c.replies) {
@@ -109,11 +113,12 @@ export async function buildOwnerReplyReport(sb: SupabaseClient): Promise<OwnerRe
     ${decision}
     <table style="border-collapse:collapse" cellpadding="6" border="1">
       <tr style="background:#f3f3f3"><th>Group</th><th>First emails</th><th>Replies</th><th>Opt-outs</th><th>Other replies</th><th>Other replies per 100</th><th>Bounced</th></tr>
-      ${row(owner)}${row(reapproach)}${row(other)}
+      ${row(owner)}${row(reapproach)}${row(origami)}${row(other)}
     </table>
     <p style="color:#666">"Other replies" are every reply that was not an opt-out. Interested or not is your call; the text is below.</p>
     <h3>Owner-finder replies</h3>${await replyItems(owner)}
     <h3>Re-approach replies</h3>${await replyItems(reapproach)}
+    <h3>Origami import replies</h3>${await replyItems(origami)}
     <h3>Other named replies</h3>${await replyItems(other)}
     <p style="color:#666">Sent every Thursday at 14:30 UTC by /api/owner-reply-check. No email on a Thursday means it did not run.</p>
     </div>`
@@ -121,5 +126,5 @@ export async function buildOwnerReplyReport(sb: SupabaseClient): Promise<OwnerRe
   const subject = `Owner reply check: ${owner.sent} owner emails out, ${owner.replied - owner.optedOut} non-opt-out replies` +
     (remaining ? '' : ' - ready to decide')
   const strip = (c: Cohort) => ({ label: c.label, sent: c.sent, replied: c.replied, optedOut: c.optedOut, bounced: c.bounced })
-  return { subject, html, owner: strip(owner), reapproach: strip(reapproach), other: strip(other) }
+  return { subject, html, owner: strip(owner), reapproach: strip(reapproach), origami: strip(origami), other: strip(other) }
 }
