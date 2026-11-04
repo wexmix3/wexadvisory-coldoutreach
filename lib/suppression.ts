@@ -9,9 +9,14 @@ const FREE_MAIL = /^(gmail|yahoo|hotmail|outlook|aol|icloud|me|live|msn|comcast|
 const emailDomain = (e: string) => e.split('@')[1]?.trim().toLowerCase() ?? ''
 
 export async function loadSuppressedDomains(sb: SupabaseClient): Promise<Set<string>> {
-  const { data, error } = await sb.from('suppressed_domains').select('domain').limit(10000)
-  if (error) throw new Error(`suppressed_domains read failed: ${error.message}`)
-  return new Set((data ?? []).map(r => (r.domain as string).toLowerCase()))
+  // Paged: hosted PostgREST caps a response at 1,000 rows, which would silently drop the rest.
+  const out = new Set<string>()
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from('suppressed_domains').select('domain').order('domain').range(from, from + 999)
+    if (error) throw new Error(`suppressed_domains read failed: ${error.message}`)
+    for (const r of data ?? []) out.add((r.domain as string).toLowerCase())
+    if ((data ?? []).length < 1000) return out
+  }
 }
 
 export function blockReason(p: { email: string; website: string | null }, suppressed: Set<string>): string | null {
