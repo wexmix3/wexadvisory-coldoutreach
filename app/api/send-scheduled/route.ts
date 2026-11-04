@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { renderTemplate } from '@/lib/tokens'
 import { Prospect } from '@/lib/types'
+import { blockReason, loadSuppressedDomains } from '@/lib/suppression'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -68,8 +69,15 @@ async function buildQueue(): Promise<{ queue: QueueItem[]; heldNoContactName: nu
     ...(f1 ?? []).map(p => ({ prospect: p, send_type: 'followup1' as const })),
   ]
 
-  const followupBatch = followups.slice(0, MAX_FOLLOWUP_PER_BATCH)
-  const initialBatch: QueueItem[] = (initial ?? []).slice(0, MAX_INITIAL_PER_BATCH).map(p => ({ prospect: p, send_type: 'initial' as const }))
+  // Filtered before the caps so a blocked prospect never takes a slot.
+  const suppressed = await loadSuppressedDomains(sb)
+  const allowed = (p: Prospect) => {
+    const why = blockReason(p, suppressed)
+    if (why) console.warn(`[send-scheduled] skipped ${p.email}: ${why}`)
+    return !why
+  }
+  const followupBatch = followups.filter(f => allowed(f.prospect)).slice(0, MAX_FOLLOWUP_PER_BATCH)
+  const initialBatch: QueueItem[] = (initial ?? []).filter(allowed).slice(0, MAX_INITIAL_PER_BATCH).map(p => ({ prospect: p, send_type: 'initial' as const }))
 
   // Not an error, but it must not look like a broken cron: the hold is working as designed
   // and the supply of named prospects has run out.

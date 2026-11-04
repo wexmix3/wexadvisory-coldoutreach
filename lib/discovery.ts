@@ -88,6 +88,7 @@ export function isValidEmail(email: string): boolean {
   if (IMAGE_EXTS.test('.' + tld)) return false
   if (SKIP_PATTERNS.some(p => email.includes(p))) return false
   if (BLOCKED_DOMAINS.has(domain.toLowerCase())) return false
+  if (isPlatformDomain(domain)) return false
   if (PLACEHOLDER_LOCAL.test(local)) return false
   if (HTML_ENTITY_RE.test(local)) return false
   return true
@@ -107,6 +108,11 @@ const NOT_OWN_SITE_DOMAINS = new Set([
   'tinyurl.com', 'bit.ly', 'linktr.ee', 'goo.gl', 't.co', 'rebrand.ly', 'lnk.bio', 'beacons.ai',
   'yelp.com', 'facebook.com', 'instagram.com', 'linkedin.com', 'google.com', 'sites.google.com',
 ])
+
+// An address at one of these belongs to the platform, not the business (steve@linktr.ee was emailed 2026-10).
+export function isPlatformDomain(domain: string): boolean {
+  return NOT_OWN_SITE_DOMAINS.has(domain.trim().toLowerCase())
+}
 
 export function extractDomain(website: string): string | null {
   try { return new URL(website).hostname.replace(/^www\./, '') } catch { return null }
