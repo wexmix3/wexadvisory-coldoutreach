@@ -42,7 +42,7 @@ type Prospect = {
 }
 
 async function gmail<T>(path: string, token: string): Promise<T> {
-  const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, { headers: { Authorization: `Bearer ${token}` } })
+  const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
   if (!res.ok) throw new Error(`Gmail API error (${path}): ${res.status} ${await res.text()}`)
   return res.json() as Promise<T>
 }

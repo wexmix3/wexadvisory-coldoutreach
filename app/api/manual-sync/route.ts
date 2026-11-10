@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   let mailbox: string | null = null
   try {
     const token = await getGmailAccessToken()
-    const prof = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: { Authorization: `Bearer ${token}` } })
+    const prof = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
     mailbox = prof.ok ? ((await prof.json()) as { emailAddress?: string }).emailAddress ?? null : `profile ${prof.status}`
     const rows = await syncManualPitches(getSupabaseAdmin(), token, apply)
     return NextResponse.json({ applied: apply, mailbox, summary: manualSummaryLines(rows), rows })

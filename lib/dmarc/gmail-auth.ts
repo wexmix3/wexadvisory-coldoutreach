@@ -14,6 +14,7 @@ export async function getGmailAccessToken(): Promise<string> {
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
+    cache: 'no-store', // never let Next's Data Cache hand back an expired access token
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: clientId,
