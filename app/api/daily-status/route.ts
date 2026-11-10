@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { OWNER_TAG } from '@/lib/owner-finder'
 import { REAPPROACH_TAG } from '@/lib/reapproach'
+import { getGmailAccessToken } from '@/lib/dmarc/gmail-auth'
+import { syncManualPitches, manualSummaryLines } from '@/lib/manual-sync'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,15 +58,17 @@ async function sendNotificationEmail(
   by_template: { template_type: string; sent: number; failed: number }[],
   last_sent_at: string | null,
   date: string,
-  supply: Supply
+  supply: Supply,
+  manual: { text: string; failed: boolean; newReply: boolean }
 ): Promise<void> {
   const apiKey = process.env.RESEND_CONFIRMATION_API_KEY
   if (!apiKey) throw new Error('RESEND_CONFIRMATION_API_KEY not configured')
 
   const noActivity = total_sent === 0 && total_failed === 0
+  const flag = manual.failed ? '⚠️ Pitch sync failed · ' : manual.newReply ? 'New reply to a hand-sent pitch · ' : ''
   const subject = noActivity
-    ? `Outreach: ⚠️ No sends today · ${date}`
-    : `Outreach: ${total_sent} sent today · ${date}`
+    ? `Outreach: ${flag}⚠️ No sends today · ${date}`
+    : `Outreach: ${flag}${total_sent} sent today · ${date}`
 
   const lastSentLine = last_sent_at
     ? `Last send: ${new Date(last_sent_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', timeZoneName: 'short' })}`
@@ -75,8 +79,8 @@ async function sendNotificationEmail(
     .join('\n')
 
   const body = noActivity
-    ? `No outreach emails were sent today (${date}).\n\nThe 2pm UTC cron may not have run, or there were no prospects queued.\n\n${supplyLines(supply)}\n\nCheck the dashboard: https://outreach-tool-inky.vercel.app`
-    : `Date: ${date}\nSent: ${total_sent}\nFailed: ${total_failed}\n${lastSentLine}\n\nBreakdown:\n${breakdownRows}\n\n${supplyLines(supply)}\n\nDashboard: https://outreach-tool-inky.vercel.app`
+    ? `No outreach emails were sent today (${date}).\n\nThe 2pm UTC cron may not have run, or there were no prospects queued.\n\n${supplyLines(supply)}\n\n${manual.text}\n\nCheck the dashboard: https://outreach-tool-inky.vercel.app`
+    : `Date: ${date}\nSent: ${total_sent}\nFailed: ${total_failed}\n${lastSentLine}\n\nBreakdown:\n${breakdownRows}\n\n${supplyLines(supply)}\n\n${manual.text}\n\nDashboard: https://outreach-tool-inky.vercel.app`
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -172,9 +176,21 @@ export async function GET(req: NextRequest) {
   const payload = { date, total_sent, total_failed, by_template, last_sent_at, supply }
 
   if (notify) {
+    // Hand-sent Gmail pitches (lib/manual-sync.ts): sync them now so this email carries their state. A failure
+    // goes into the subject and body, and the route returns 500, so it is never silent.
+    const manual = { text: '', failed: false, newReply: false }
     try {
-      await sendNotificationEmail(total_sent, total_failed, by_template, last_sent_at, date, supply)
-      return NextResponse.json({ ...payload, notified: true })
+      const rows = await syncManualPitches(sb, await getGmailAccessToken(), true)
+      manual.text = manualSummaryLines(rows)
+      manual.newReply = rows.some((r) => r.changed.includes('replied_at'))
+    } catch (err) {
+      manual.failed = true
+      manual.text = `Hand-sent pitch sync FAILED: ${err instanceof Error ? err.message : 'Unknown'}`
+    }
+    try {
+      await sendNotificationEmail(total_sent, total_failed, by_template, last_sent_at, date, supply, manual)
+      if (manual.failed) return NextResponse.json({ ...payload, notified: true, manual_sync_error: manual.text }, { status: 500 })
+      return NextResponse.json({ ...payload, notified: true, manual: manual.text })
     } catch (err) {
       return NextResponse.json(
         { ...payload, notified: false, notify_error: err instanceof Error ? err.message : 'Unknown' },
