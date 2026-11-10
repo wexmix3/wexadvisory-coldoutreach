@@ -3,9 +3,10 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { OWNER_TAG } from '@/lib/owner-finder'
 import { REAPPROACH_TAG } from '@/lib/reapproach'
 import { getGmailAccessToken } from '@/lib/dmarc/gmail-auth'
-import { syncManualPitches, manualSummaryLines } from '@/lib/manual-sync'
+import { syncManualPitches, manualSummaryLines, MANUAL_LOG_PREFIX } from '@/lib/manual-sync'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 const TEMPLATE_LABELS: Record<string, string> = {
   initial: 'Initial',
@@ -109,13 +110,15 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await sb
     .from('email_log')
-    .select('template_type, status, sent_at')
+    .select('template_type, status, sent_at, resend_id')
     .gte('sent_at', todayStr)
     .order('sent_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const logs = (data ?? []) as LogRow[]
+  // Hand-sent Gmail pitches are logged too (resend_id "gmail:<id>"); they are not tool sends, so they must not
+  // count here or they would hide the "No sends today" alarm.
+  const logs = ((data ?? []) as (LogRow & { resend_id: string | null })[]).filter((l) => !(l.resend_id ?? '').startsWith(MANUAL_LOG_PREFIX))
 
   const total_sent = logs.filter((l) => l.status === 'sent').length
   const total_failed = logs.filter((l) => l.status === 'failed').length
@@ -178,11 +181,15 @@ export async function GET(req: NextRequest) {
   if (notify) {
     // Hand-sent Gmail pitches (lib/manual-sync.ts): sync them now so this email carries their state. A failure
     // goes into the subject and body, and the route returns 500, so it is never silent.
+    // Capped at 25 s so a slow Gmail can never stop this email from going out (maxDuration 60).
     const manual = { text: '', failed: false, newReply: false }
     try {
-      const rows = await syncManualPitches(sb, await getGmailAccessToken(), true)
+      const rows = await Promise.race([
+        (async () => syncManualPitches(sb, await getGmailAccessToken(), true))(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out after 25 s')), 25_000)),
+      ])
       manual.text = manualSummaryLines(rows)
-      manual.newReply = rows.some((r) => r.changed.includes('replied_at'))
+      manual.newReply = rows.some((r) => r.new_reply)
     } catch (err) {
       manual.failed = true
       manual.text = `Hand-sent pitch sync FAILED: ${err instanceof Error ? err.message : 'Unknown'}`
